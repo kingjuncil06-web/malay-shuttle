@@ -1,0 +1,123 @@
+
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+    <title>MALAY-SHUTTLE</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+    <h1>MALAY-SHUTTLE</h1>
+    <p>School Shuttle Reservation System</p>
+</header>
+
+<main>
+    <section class="date-card">
+        <span>Today's Schedule</span>
+        <h3 th:text="${currentDate}">Loading...</h3>
+        <p>Reservations are for today only.</p>
+    </section>
+
+    <section class="welcome">
+        <h2>Find Your Next Shuttle</h2>
+        <p>Select your route and pickup point.</p>
+    </section>
+
+    <section class="booking-options">
+        <label for="direction">Shuttle Direction</label>
+        <select id="direction">
+            <option value="incoming">
+                Incoming — Pacita to School
+            </option>
+            <option value="outgoing">
+                Outgoing — School to Pacita
+            </option>
+        </select>
+
+        <label for="pickup">Pickup Point</label>
+        <select id="pickup">
+            <option value="0">Pacita Astrodome</option>
+            <option value="1">
+                Ukay-Ukay beside Savemore
+            </option>
+            <option value="2">
+                Uncle John's Maria Aurora
+            </option>
+        </select>
+    </section>
+
+    <section class="trips">
+        <h2>Available Trips</h2>
+        <div id="tripList"></div>
+    </section>
+    
+<section class="my-bookings">
+    <h2>My Booking</h2>
+
+    <label for="searchStudentId">Student ID</label>
+    <input
+        type="text"
+        id="searchStudentId"
+        placeholder="Enter your student ID"
+        maxlength="30"
+    >
+
+    <button type="button" id="findBookings">
+        Find My Reservations
+    </button>
+
+    <div id="bookingResults"></div>
+</section>
+
+<dialog id="reservationDialog">
+    <form id="reservationForm">
+        <h2>Reserve a Seat</h2>
+
+        <p id="selectedTrip"></p>
+
+        <label for="studentName">Full Name</label>
+        <input
+            id="studentName"
+            type="text"
+            maxlength="100"
+            required
+        >
+
+        <label for="studentId">Student ID</label>
+        <input
+            id="studentId"
+            type="text"
+            maxlength="30"
+            required
+        >
+
+        <p id="selectedPickup"></p>
+
+        <button type="submit" id="confirmReservation">
+            Confirm Reservation
+        </button>
+
+        <button type="button" id="closeDialog"
+                class="secondary-button">
+            Cancel
+        </button>
+
+        <p id="reservationMessage" role="status"></p>
+    </form>
+</dialog>
+
+</main>
+
+<nav class="bottom-nav">
+    <span>Home</span>
+    <span>My Booking</span>
+    <span>Profile</span>
+</nav>
+
+<script src="/script.js"></script>
+</body>
+</html>

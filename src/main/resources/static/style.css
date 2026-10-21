@@ -1,0 +1,246 @@
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f4f6f8;
+    color: #222;
+    padding-bottom: 80px;
+}
+
+header {
+    background: #164b38;
+    color: white;
+    padding: 24px 16px;
+    text-align: center;
+}
+
+header h1 {
+    margin: 0;
+    font-size: 24px;
+}
+
+header p {
+    font-size: 13px;
+}
+
+main {
+    max-width: 480px;
+    margin: auto;
+    padding: 20px 16px;
+}
+
+.welcome h2 {
+    font-size: 22px;
+}
+
+.welcome p {
+    color: #666;
+}
+
+.shuttle-card {
+    background: white;
+    padding: 20px;
+    margin-top: 16px;
+    border-radius: 14px;
+    box-shadow: 0 3px 12px rgba(0,0,0,0.06);
+}
+
+.shuttle-card h3 {
+    margin-top: 0;
+}
+
+.seats {
+    color: #16834a;
+    font-weight: bold;
+}
+
+button {
+    width: 100%;
+    padding: 14px;
+    background: #164b38;
+    color: white;
+    border: none;
+    border-radius: 9px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+button:active {
+    background: #0d3527;
+}
+
+.bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    display: flex;
+    justify-content: space-around;
+    padding: 18px 10px;
+    border-top: 1px solid #ddd;
+}
+
+
+.date-card {
+    background: #e3f2e9;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 20px;
+}
+
+.date-card p {
+    color: #426454;
+    font-size: 13px;
+    margin: 4px 0;
+}
+
+.date-card h3 {
+    color: #164b38;
+    margin: 8px 0;
+    font-size: 18px;
+}
+
+
+.date-card {
+    background: #e3f2e9;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 20px;
+}
+
+.date-card span,
+.date-card p {
+    color: #426454;
+    font-size: 13px;
+}
+
+.date-card h3 {
+    color: #164b38;
+    margin: 8px 0;
+}
+
+.booking-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 20px 0;
+}
+
+.booking-options label {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.booking-options select {
+    width: 100%;
+    padding: 14px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    background: white;
+    font-size: 15px;
+}
+
+.trips h2 {
+    font-size: 19px;
+    margin-top: 24px;
+}
+
+.eta {
+    color: #164b38;
+    font-weight: bold;
+}
+
+.shuttle-card button:disabled {
+    background: #84978e;
+    cursor: not-allowed;
+}
+
+@media (max-width: 480px) {
+    main {
+        padding: 16px;
+    }
+
+    .shuttle-card {
+        padding: 16px;
+    }
+}
+
+
+.my-bookings {
+    margin-top: 30px;
+    padding: 20px;
+    background: white;
+    border-radius: 14px;
+}
+
+.my-bookings label,
+#reservationForm label {
+    display: block;
+    font-weight: bold;
+    font-size: 14px;
+    margin: 12px 0 6px;
+}
+
+.my-bookings input,
+#reservationForm input {
+    width: 100%;
+    padding: 14px;
+    border: 1px solid #ddd;
+    border-radius: 9px;
+    font-size: 16px;
+}
+
+.my-bookings button {
+    margin-top: 12px;
+}
+
+#reservationDialog {
+    width: calc(100% - 32px);
+    max-width: 420px;
+    border: none;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+}
+
+#reservationDialog::backdrop {
+    background: rgba(0,0,0,0.55);
+}
+
+#reservationForm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#reservationForm h2 {
+    margin: 0 0 8px;
+}
+
+#reservationForm button {
+    margin-top: 10px;
+}
+
+.secondary-button {
+    background: #e8eeea;
+    color: #164b38;
+}
+
+.secondary-button:active {
+    background: #d5e1d9;
+}
+
+#reservationMessage {
+    font-size: 14px;
+    color: #a33b28;
+}
+
+#bookingResults .shuttle-card {
+    border: 1px solid #e5e5e5;
+    box-shadow: none;
+}
