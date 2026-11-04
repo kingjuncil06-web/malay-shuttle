@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://determined-contents-barriers-implement.trycloudflare.com/api/:path*"
+    }
+  ]
+}
