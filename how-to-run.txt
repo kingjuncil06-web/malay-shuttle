@@ -1,31 +1,15 @@
-Step 1: Open your project in VS Code
-Open this folder:
-C:\Users\King\Desktop\malay-shuttle\malay-shuttle
+MALAY-SHUTTLE
 
+Run these commands in PowerShell from the folder containing pom.xml.
 
-Then open a terminal using Terminal → New Terminal.
-Step 2: Set your MySQL password
-In Terminal 1, enter:
-$env:DB_PASSWORD = "king0609"
+$env:SHUTTLE_DRIVER_CODE = "replace-with-a-private-driver-code"
+.\mvnw.cmd clean spring-boot:run
 
+Open http://localhost:8080. Java 21 is required.
 
-Replace the placeholder with your actual malay_app password.
+For a two-device demo, connect both devices to the same network and open
+http://HOST_IP:8080 on the second device. Use sample names on plain HTTP.
 
-Make sure your MySQL Server service is running.
-Step 3: Start Spring Boot
-In the same terminal, run:
-.\mvnw.cmd spring-boot:run
-
-
-Your website should now be accessible at:
-http://localhost:8080 | Keep Terminal 1 running!
-Step 4: Open a second terminal
-In VS Code:
-1. Click Terminal → New Terminal.
-2. Leave Terminal 1 running.
-3. In Terminal 2, enter:
-cloudflared tunnel --url http://localhost:8080
-
-
-If cloudflared isn't recognized, restart VS Code or use the full path to cloudflared.exe.
-Step 5: Copy your Cloudflare link
+The passenger opens Pickup ping, chooses a stop, types a name, and sends a ping.
+The driver opens Driver controls under Shuttle status and enters the driver code.
+The driver can update the occupied count, view incoming alerts, and dismiss them.

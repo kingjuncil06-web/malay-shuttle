@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MALAY-SHUTTLE</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <header><h1>MALAY-SHUTTLE</h1></header>
+  <main>
+    <nav aria-label="Shuttle views">
+      <button type="button" data-view="status" aria-controls="status" aria-pressed="true">Shuttle status</button>
+      <button type="button" data-view="pickup" aria-controls="pickup" aria-pressed="false">Pickup ping</button>
+    </nav>
+    <section id="status" aria-labelledby="status-heading">
+      <h2 id="status-heading">Shuttle status</h2>
+      <div class="counts">
+        <p><strong id="taken">—</strong> Seats taken</p>
+        <p><strong id="available">—</strong> Seats available</p>
+      </div>
+      <p id="connection" role="status"></p>
+      <details id="driver">
+        <summary>Driver controls</summary>
+        <form id="seat-form">
+          <label>Driver code <input id="code" type="password" required></label>
+          <label>Seats taken <input id="seat-input" type="number" min="0" step="1" required></label>
+          <button>Update seats</button>
+        </form>
+        <p id="driver-message" role="status"></p>
+        <h3>Pickup alerts <span id="alert-count"></span></h3>
+        <p id="alert-message" role="status">Enter the driver code to see waiting passengers.</p>
+        <ul id="alerts"></ul>
+      </details>
+    </section>
+    <section id="pickup" aria-labelledby="pickup-heading" hidden>
+      <h2 id="pickup-heading">Ping your pickup point</h2>
+      <p>Select where you’re waiting, then send your name to the driver.</p>
+      <nav id="stops" aria-label="Pickup locations"></nav>
+      <form id="ping-form">
+        <label>Your name <input id="name" autocomplete="name" maxlength="60" required></label>
+        <button id="ping-button" disabled>I’m still at the pickup point</button>
+      </form>
+      <p id="ping-message" role="status"></p>
+    </section>
+  </main>
+</body>
+</html>
