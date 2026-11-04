@@ -1,4 +1,6 @@
 HELP.md
+.env*
+.vercel/
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/

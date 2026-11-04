@@ -28,6 +28,7 @@ for (const button of views) {
     button.onclick = () => {
         switchTab(button, views);
         for (const tab of views) byId(tab.dataset.view).hidden = tab !== button;
+        refresh();
     };
 }
 
@@ -81,6 +82,7 @@ function showAlerts(alerts) {
 async function refreshAlerts() {
     const enteredCode = code.value;
     const message = byId("alert-message");
+    if (document.hidden || byId("status").hidden) return;
     if (!driver.open || !enteredCode) {
         showAlerts([]);
         message.textContent = "Enter the driver code to see waiting passengers.";
@@ -99,6 +101,7 @@ async function refreshAlerts() {
 }
 
 code.oninput = () => showAlerts([]);
+code.onchange = refreshAlerts;
 driver.ontoggle = refreshAlerts;
 
 function handleForm(formId, messageId, submit) {
@@ -131,14 +134,22 @@ handleForm("ping-form", "ping-message", async () => {
     return "Ping sent for " + stop + ".";
 });
 
+let refreshTimer;
+let refreshing = false;
+
 async function refresh() {
+    clearTimeout(refreshTimer);
+    if (document.hidden || refreshing) return;
+    refreshing = true;
     try {
         showStatus(await request("/status"));
     } catch {
         byId("connection").textContent = "Could not refresh seat counts. Retrying…";
     }
     await refreshAlerts();
-    setTimeout(refresh, 3000);
+    refreshing = false;
+    if (!document.hidden) refreshTimer = setTimeout(refresh, 30000);
 }
 
+document.addEventListener("visibilitychange", refresh);
 refresh();

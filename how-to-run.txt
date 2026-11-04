@@ -1,5 +1,25 @@
 MALAY-SHUTTLE
 
+VERCEL DEPLOYMENT
+
+1. Create a free Upstash Redis database and open its REST API connection details.
+2. In Vercel, open the MALAY-SHUTTLE project and go to Settings > Environment Variables.
+   Add the following to Production:
+   UPSTASH_REDIS_REST_URL    The HTTPS REST endpoint from Upstash
+   UPSTASH_REDIS_REST_TOKEN  The read/write REST token from Upstash
+   SHUTTLE_DRIVER_CODE       Your private driver code
+   Store these values in Vercel. Keep them out of Git.
+3. In Vercel, set the Root Directory to the folder containing vercel.json and api/.
+   Commit the project changes and push to the production branch. The new
+   deployment uses Vercel Functions and Redis for API requests.
+4. Open https://malay-shuttle.vercel.app/api/status and check for JSON. Set
+   an occupied seat count, send a sample ping, and dismiss it as the driver.
+   A 503 response indicates that Redis configuration or connectivity needs checking.
+5. Turn off local Spring Boot and cloudflared and repeat the check on Vercel.
+   Redis starts with zero occupied seats and no alerts on a fresh database.
+
+LOCAL SPRING BOOT DEMO
+
 Run these commands in PowerShell from the folder containing pom.xml.
 
 $env:SHUTTLE_DRIVER_CODE = "replace-with-a-private-driver-code"
