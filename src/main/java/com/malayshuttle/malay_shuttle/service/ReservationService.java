@@ -2,118 +2,154 @@
 package com.malayshuttle.malay_shuttle.service;
 
 import com.malayshuttle.malay_shuttle.model.Reservation;
+import com.malayshuttle.malay_shuttle.repository.ReservationRepository;
+
+import jakarta.persistence.EntityManager;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.util.*;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ReservationService {
 
     private static final int CAPACITY = 15;
+
     private static final ZoneId PH_TIME =
             ZoneId.of("Asia/Manila");
 
-    private final Map<String, List<Reservation>> trips =
-            new HashMap<>();
+    private final ReservationRepository repository;
+    private final EntityManager entityManager;
 
-    private final Map<String, Integer> nextQueueNumbers =
-            new HashMap<>();
+    public ReservationService(
+            ReservationRepository repository,
+            EntityManager entityManager) {
 
-    private String tripKey(String departure) {
-        return LocalDate.now(PH_TIME) + "_" + departure;
+        this.repository = repository;
+        this.entityManager = entityManager;
     }
 
-    public synchronized Reservation reserve(
+    private LocalDate today() {
+        return LocalDate.now(PH_TIME);
+    }
+
+    @Transactional
+    public Reservation reserve(
             String departure,
             String studentName,
             String studentId,
             String pickupPoint) {
 
-        String key = tripKey(departure);
-        List<Reservation> reservations =
-                trips.computeIfAbsent(key, k -> new ArrayList<>());
+        // Lock a single database row until
+        // the reservation transaction finishes.
+        // This protects against concurrent overbooking.
+        entityManager.createNativeQuery(
+            "SELECT id FROM booking_mutex " +
+            "WHERE id = 1 FOR UPDATE"
+        ).getSingleResult();
 
-        long active = reservations.stream()
-                .filter(r -> !r.getStatus().equals("CANCELLED"))
-                .count();
+        LocalDate date = today();
+
+        long active =
+                repository.countByServiceDateAndDepartureAndStatusNot(
+                    date,
+                    departure,
+                    "CANCELLED"
+                );
 
         if (active >= CAPACITY) {
             throw new IllegalStateException(
-                    "This shuttle is fully booked.");
+                "This shuttle is fully booked."
+            );
         }
 
-        boolean duplicate = reservations.stream()
-                .anyMatch(r ->
-                        r.getStudentId().equalsIgnoreCase(studentId)
-                        && !r.getStatus().equals("CANCELLED"));
+        boolean duplicate =
+                repository.existsByServiceDateAndDepartureAndStudentIdIgnoreCaseAndStatusNot(
+                    date,
+                    departure,
+                    studentId,
+                    "CANCELLED"
+                );
 
         if (duplicate) {
             throw new IllegalStateException(
-                    "You already have a reservation for this trip.");
+                "You already have a reservation for this trip."
+            );
         }
 
-        int queue = nextQueueNumbers.merge(key, 1, Integer::sum);
+        int nextQueue = repository
+            .findTopByServiceDateAndDepartureOrderByQueueNumberDesc(
+                date, departure
+            )
+            .map(r -> r.getQueueNumber() + 1)
+            .orElse(1);
 
         Reservation reservation = new Reservation(
-                UUID.randomUUID().toString(),
-                studentName,
-                studentId,
-                departure,
-                pickupPoint,
-                queue
+            UUID.randomUUID().toString(),
+            date,
+            studentName,
+            studentId,
+            departure,
+            pickupPoint,
+            nextQueue
         );
 
-        reservations.add(reservation);
-        return reservation;
+        return repository.saveAndFlush(reservation);
     }
 
-    public synchronized int available(String departure) {
-        List<Reservation> reservations =
-                trips.getOrDefault(tripKey(departure), List.of());
+    @Transactional(readOnly = true)
+    public int available(String departure) {
 
-        long active = reservations.stream()
-                .filter(r -> !r.getStatus().equals("CANCELLED"))
-                .count();
+        long active =
+                repository.countByServiceDateAndDepartureAndStatusNot(
+                    today(),
+                    departure,
+                    "CANCELLED"
+                );
 
-        return CAPACITY - (int) active;
+        return Math.max(0, CAPACITY - (int) active);
     }
 
-    public synchronized List<Reservation> getBookings(
+    @Transactional(readOnly = true)
+    public List<Reservation> getBookings(
             String studentId) {
 
-        String todayPrefix = LocalDate.now(PH_TIME) + "_";
-
-        return trips.entrySet().stream()
-                .filter(e -> e.getKey().startsWith(todayPrefix))
-                .flatMap(e -> e.getValue().stream())
-                .filter(r -> r.getStudentId()
-                        .equalsIgnoreCase(studentId))
-                .toList();
+        return repository
+            .findByServiceDateAndStudentIdIgnoreCaseOrderByQueueNumberAsc(
+                today(),
+                studentId
+            );
     }
 
-    public synchronized Reservation cancel(
-            String bookingId, String studentId) {
+    @Transactional
+    public Reservation cancel(
+            String bookingId,
+            String studentId) {
 
-        for (List<Reservation> reservations : trips.values()) {
-            for (Reservation r : reservations) {
-                if (r.getBookingId().equals(bookingId)
-                        && r.getStudentId().equalsIgnoreCase(studentId)) {
+        Reservation reservation = repository
+            .findByBookingIdAndStudentIdIgnoreCase(
+                bookingId,
+                studentId
+            )
+            .orElseThrow(() ->
+                new NoSuchElementException(
+                    "Reservation not found."
+                )
+            );
 
-                    if (!r.getStatus().equals("RESERVED")) {
-                        throw new IllegalStateException(
-                                "This booking cannot be cancelled.");
-                    }
-
-                    r.setStatus("CANCELLED");
-                    return r;
-                }
-            }
+        if (!reservation.getStatus().equals("RESERVED")) {
+            throw new IllegalStateException(
+                "This booking cannot be cancelled."
+            );
         }
 
-        throw new NoSuchElementException(
-                "Reservation not found.");
+        reservation.setStatus("CANCELLED");
+
+        return repository.save(reservation);
     }
 }

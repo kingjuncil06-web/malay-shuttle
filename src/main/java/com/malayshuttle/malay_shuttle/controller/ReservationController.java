@@ -27,7 +27,8 @@ public class ReservationController {
     private final Set<String> pickupPoints = Set.of(
         "Pacita Astrodome",
         "Ukay-Ukay beside Savemore",
-        "Uncle John's Maria Aurora"
+        "Uncle John's Maria Aurora",
+        "Southwoods"
     );
 
     public ReservationController(ReservationService service) {
