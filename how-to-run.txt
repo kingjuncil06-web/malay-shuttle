@@ -9,26 +9,33 @@ VERCEL DEPLOYMENT
    UPSTASH_REDIS_REST_TOKEN  The read/write REST token from Upstash
    SHUTTLE_DRIVER_CODE       Your private driver code
    Store these values in Vercel. Keep them out of Git.
-3. In Vercel, set the Root Directory to the folder containing vercel.json and api/.
-   Commit the project changes and push to the production branch. The new
-   deployment uses Vercel Functions and Redis for API requests.
+3. In Vercel, set the Root Directory to the folder containing vercel.json
+   and Dockerfile. Clear any custom Build Command, Install Command, and
+   Output Directory overrides left over from the static deployment.
+   The project selects Vercel's beta Container runtime in vercel.json.
+   Keep Vercel system environment variables enabled so VERCEL_ENV selects
+   the existing Production or Preview Redis keys.
+   Push a branch and test its Preview deployment before merging to main.
+   For Preview testing, add the three variables to Preview as well.
 4. Open https://malay-shuttle.vercel.app/api/status and check for JSON. Set
    an occupied seat count, send a sample ping, and dismiss it as the driver.
    A 503 response indicates that Redis configuration or connectivity needs checking.
-5. Turn off local Spring Boot and cloudflared and repeat the check on Vercel.
-   Redis starts with zero occupied seats and no alerts on a fresh database.
+5. Use the same Vercel URL on both devices. A fresh Redis database starts
+   with zero occupied seats and no alerts.
 
-LOCAL SPRING BOOT DEMO
+LOCAL TEST WITH JAVA 21
 
-Run these commands in PowerShell from the folder containing pom.xml.
+Run in PowerShell from the folder containing ShuttleServer.java.
 
-$env:SHUTTLE_DRIVER_CODE = "replace-with-a-private-driver-code"
-.\mvnw.cmd clean spring-boot:run
+New-Item -ItemType Directory -Force target | Out-Null
+curl.exe -fL https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.14.0/gson-2.14.0.jar -o target/gson.jar
+$env:UPSTASH_REDIS_REST_URL = "your Upstash HTTPS endpoint"
+$env:UPSTASH_REDIS_REST_TOKEN = "your Upstash read/write token"
+$env:SHUTTLE_DRIVER_CODE = "your private driver code"
+java -cp target/gson.jar ShuttleServer.java
 
-Open http://localhost:8080. Java 21 is required.
-
-For a two-device demo, connect both devices to the same network and open
-http://HOST_IP:8080 on the second device. Use sample names on plain HTTP.
+Open http://localhost:8080. Local runs use development Redis keys.
+Keep credentials out of Git.
 
 The passenger opens Pickup ping, chooses a stop, types a name, and sends a ping.
 The driver opens Driver controls under Shuttle status and enters the driver code.

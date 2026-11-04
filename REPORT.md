@@ -13,20 +13,13 @@ MALAY-SHUTTLE displays the seat count for one shuttle. A driver enters the numbe
 
 | File | What to explain |
 | --- | --- |
-| `vercel.json` | Tells Vercel where to find the website files and routes alert dismissals to the alerts function. |
-| `api/status.mjs` | Reads or updates the Redis seat count and calculates available seats. |
-| `api/alerts.mjs` | Accepts pings, lists them for the driver, and dismisses them. A Redis script checks for a duplicate and applies the 100-alert limit in the same operation as saving a new ping. |
-| `lib/shuttle.mjs` | Holds the capacity and pickup locations, checks the driver code, and sends Redis commands over HTTPS. |
-| `MalayShuttleApplication.java` | Java entry point for the local demo. `SpringApplication.run` starts Spring Boot and its web server. |
-| `ShuttleController.java` | Implements the same API for the local demo using memory. The synchronized methods let one request at a time change or read the shuttle state. |
-| `index.html` | Defines the two main views, the seat counters, the driver form, the pickup location buttons’ container, and the name form. |
-| `style.css` | Styles the page, highlights the selected view and stop, and lets controls wrap on small screens. |
-| `script.js` | Switches views, creates a button for each pickup point returned by the server, submits forms with `fetch`, and refreshes the counts and alerts. It displays passenger names as plain text. |
-| `application.properties` | Sets the server port to 8080, reads the driver code from the environment, and rejects fractional values where the API expects a whole number. |
-| `pom.xml` | Tells Maven to use Java 21 and Spring Boot, with dependencies for HTTP, JSON, and tests. |
-| `mvnw.cmd` and `mvnw` | Maven launchers for Windows and Unix-like systems. |
-| `MalayShuttleApplicationTests.java` | Sends simulated HTTP requests through Spring MVC to check the public page, seat updates, and the pickup alert lifecycle. |
-| `how-to-run.txt` | Explains Vercel and Redis setup and gives the PowerShell commands for a local demo. |
+| `ShuttleServer.java` | Starts the built-in Java 21 HTTP server, serves the page, and handles the API. Java checks the driver code, calculates available seats, validates pings, and sends commands to Redis using its built-in HTTP client. Gson reads and writes JSON. A Redis script applies the duplicate check and 100-alert limit atomically. |
+| `Dockerfile` | Downloads the pinned Gson library, compiles the server with `javac`, and packages the compiled classes and website with Java 21. |
+| `vercel.json` | Selects Vercel’s Container runtime so HTTP requests reach the Java server. |
+| `public/index.html` | Defines the two main views, the seat counters, the driver form, the pickup location buttons’ container, and the name form. |
+| `public/style.css` | Styles the page, highlights the selected view and stop, and lets controls wrap on small screens. |
+| `public/script.js` | Switches views, creates a button for each pickup point returned by the server, submits forms with `fetch`, and refreshes the counts and alerts. It displays passenger names as plain text. |
+| `how-to-run.txt` | Explains Vercel and Redis setup and how to test the app from two devices. |
 
 ## Browser-to-server requests
 
@@ -38,8 +31,8 @@ MALAY-SHUTTLE displays the seat count for one shuttle. A driver enters the numbe
 | `GET /api/alerts` | Driver | Reads pending alerts. |
 | `DELETE /api/alerts/{id}` | Driver | Dismisses one pending alert. |
 
-## Hosted and local data
+## Shared data
 
-On Vercel, each request runs a function that reads or writes shared state in Upstash Redis. The seat count and up to 100 pending alerts survive function restarts. Alerts stay pending until the driver dismisses them. The local Spring Boot demo starts with zero occupied seats and clears alerts on restart. The two environments use separate data.
+On Vercel, the Java server reads and writes shared state in Upstash Redis. The seat count and up to 100 pending alerts survive container restarts. Alerts stay pending until the driver dismisses them. Production, Preview, and local development use separate Redis key prefixes.
 
 Passengers type their own names. The driver code is checked on the server before the driver can update seats, view names, or dismiss alerts.

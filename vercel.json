@@ -1,8 +1,3 @@
 {
-  "framework": null,
-  "buildCommand": "",
-  "outputDirectory": "src/main/resources/static",
-  "rewrites": [
-    { "source": "/api/alerts/:id", "destination": "/api/alerts?id=:id" }
-  ]
+  "framework": "container"
 }
