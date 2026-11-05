@@ -20,6 +20,7 @@
         <p><strong id="taken">—</strong> Seats taken</p>
         <p><strong id="available">—</strong> Seats available</p>
       </div>
+      <p id="seat-updated">Seat count last updated: —</p>
       <p id="connection" role="status"></p>
       <details id="driver">
         <summary>Driver controls</summary>
@@ -27,6 +28,7 @@
           <label>Driver code <input id="code" type="password" required></label>
           <label>Seats taken <input id="seat-input" type="number" min="0" step="1" required></label>
           <button>Update seats</button>
+          <button id="end-trip" type="button">End trip</button>
         </form>
         <p id="driver-message" role="status"></p>
         <h3>Pickup alerts <span id="alert-count"></span></h3>
