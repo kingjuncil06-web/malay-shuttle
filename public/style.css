@@ -180,6 +180,7 @@ li button { margin-inline-start: .5rem; }
   .masthead-copy { animation-delay: .07s; }
   .route-art { animation: enter .45s .1s ease-out both; }
   main > section:not([hidden]) { animation: enter .24s ease-out both; }
+  #driver[open] > :not(summary) { animation: enter .24s ease-out both; }
   button { transition: background-color .16s ease, border-color .16s ease, translate .16s ease; }
   button:active:not(:disabled) { translate: 0 1px; }
 }
