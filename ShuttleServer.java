@@ -600,6 +600,7 @@ public class ShuttleServer {
             case "index.html" -> "text/html";
             case "style.css" -> "text/css";
             case "script.js" -> "text/javascript";
+            case "logo.png" -> "image/png";
             default -> null;
         };
         if (type == null) {
@@ -608,7 +609,7 @@ public class ShuttleServer {
             exchange.getResponseHeaders().set("Allow", "GET, HEAD");
             sendJson(exchange, 405, Map.of("error", "Method not allowed"));
         } else {
-            exchange.getResponseHeaders().set("Content-Type", type + "; charset=utf-8");
+            exchange.getResponseHeaders().set("Content-Type", type.startsWith("text/") ? type + "; charset=utf-8" : type);
             byte[] content = Files.readAllBytes(Path.of("public", file));
             exchange.sendResponseHeaders(200, method.equals("HEAD") ? -1 : content.length);
             if (method.equals("GET")) exchange.getResponseBody().write(content);
