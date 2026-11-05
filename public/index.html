@@ -8,13 +8,28 @@
   <script src="script.js" defer></script>
 </head>
 <body>
-  <header><h1>MALAY-SHUTTLE</h1></header>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <p class="eyebrow masthead-label">Campus shuttle</p>
+      <h1>MALAY<span>-</span>SHUTTLE</h1>
+      <p class="masthead-copy">Check available seats or let the driver know you’re waiting.</p>
+      <svg class="route-art" viewBox="0 0 260 145" fill="none" aria-hidden="true">
+        <path class="route-line" d="M13 116h69a24 24 0 0 0 24-24V52a24 24 0 0 1 24-24h116"/>
+        <path class="route-line route-branch" d="M106 92a24 24 0 0 0 24 24h116"/>
+        <circle cx="13" cy="116" r="7"/>
+        <circle cx="106" cy="72" r="7"/>
+        <circle cx="246" cy="28" r="7"/>
+        <circle class="route-end" cx="246" cy="116" r="8"/>
+      </svg>
+    </div>
+  </header>
   <main>
-    <nav aria-label="Shuttle views">
-      <button type="button" data-view="status" aria-controls="status" aria-pressed="true">Shuttle status</button>
-      <button type="button" data-view="pickup" aria-controls="pickup" aria-pressed="false">Pickup ping</button>
+    <nav class="view-nav" aria-label="Shuttle views">
+      <button type="button" data-view="status" aria-controls="status" aria-pressed="true"><span aria-hidden="true">01</span> Shuttle status</button>
+      <button type="button" data-view="pickup" aria-controls="pickup" aria-pressed="false"><span aria-hidden="true">02</span> Pickup ping</button>
     </nav>
     <section id="status" aria-labelledby="status-heading">
+      <p class="eyebrow section-label">Seat availability</p>
       <h2 id="status-heading">Shuttle status</h2>
       <div class="counts">
         <p><strong id="taken">—</strong> Seats taken</p>
@@ -37,6 +52,7 @@
       </details>
     </section>
     <section id="pickup" aria-labelledby="pickup-heading" hidden>
+      <p class="eyebrow section-label">Passenger check-in</p>
       <h2 id="pickup-heading">Ping your pickup point</h2>
       <p>Select where you’re waiting, then send your name to the driver.</p>
       <nav id="stops" aria-label="Pickup locations"></nav>
