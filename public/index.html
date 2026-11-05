@@ -30,6 +30,7 @@
     </nav>
     <div class="panel-area">
       <div id="pickup-replies" role="status"></div>
+      <p id="reply-connection" role="status"></p>
       <p id="connection" role="status"></p>
       <section id="passenger" aria-labelledby="passenger-heading">
         <p class="eyebrow section-label">Same route · Three shuttles</p>
@@ -55,18 +56,30 @@
           <p><strong id="available">—</strong> Seats available</p>
         </div>
         <p id="seat-updated">Seat count last updated: —</p>
+        <p id="trip-status" role="status"></p>
         <details id="driver">
           <summary>Driver controls</summary>
+          <form id="unlock-form">
+            <label>Code for this shuttle <input id="code" type="password" required autocomplete="off"></label>
+            <button>Unlock shuttle</button>
+            <button id="takeover" type="button">Take over</button>
+            <button id="release" type="button">Release control</button>
+          </form>
           <form id="seat-form">
-            <label>Driver code <input id="code" type="password" required></label>
-            <label>Seats taken <input id="seat-input" type="number" min="0" step="1" required></label>
+            <label>Seats taken <input id="seat-input" type="number" min="0" max="15" step="1" required></label>
             <button>Update seats</button>
+            <button id="start-trip" type="button">Start trip</button>
+            <button id="seat-plus" type="button">Boarded +1</button>
+            <button id="seat-minus" type="button">Left −1</button>
             <button id="end-trip" type="button">End trip</button>
           </form>
           <p id="driver-message" role="status"></p>
           <h3>Pickup alerts <span id="alert-count"></span></h3>
           <p id="alert-message" role="status">Enter the driver code to see waiting passengers.</p>
           <ul id="alerts"></ul>
+          <h3>Recent actions</h3>
+          <ol id="history"></ol>
+          <p>Update controls only while the shuttle is safely stopped.</p>
         </details>
       </section>
     </div>
