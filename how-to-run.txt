@@ -44,6 +44,10 @@ Open http://localhost:8080. Local runs use development Redis keys.
 Keep credentials out of Git.
 
 The passenger chooses an operating shuttle and pickup point, then sends a ping.
+Enable cookies so the Passenger panel can recognize the browser. It allows one
+active request across all shuttles, with 60 seconds between new submissions.
+Tap Still waiting before the five-minute expiry, or Cancel request to withdraw.
+Confirmation is available after one minute. A reminder appears after four.
 The driver unlocks the assigned shuttle. One device controls each shuttle for up
 to eight hours. Release control when finished, or use Take over on a new device.
 The previous device loses permission immediately when its token is replaced.
@@ -52,7 +56,7 @@ Trips are initially stopped, including existing data from the earlier version.
 Start each shuttle's trip with a confirmed occupied count before accepting pings.
 The old shared SHUTTLE_DRIVER_CODE is no longer used.
 
-Driver regression check with a separate test database:
+Driver and passenger regression check with a separate test database:
 javac -encoding UTF-8 -cp target/gson.jar -d target/java-check ShuttleServer.java
 node tests/driver-flow.mjs
 The test uses unique Redis keys and deletes those test keys when finished.

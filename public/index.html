@@ -39,6 +39,12 @@
         <div id="fleet" class="fleet" aria-label="Shuttles"></div>
         <h3>Ping your pickup point</h3>
         <p id="ping-target"></p>
+        <div id="active-ping" hidden>
+          <p id="active-ping-description" role="status"></p>
+          <button id="confirm-ping" type="button">Still waiting</button>
+          <button id="cancel-ping" type="button">Cancel request</button>
+        </div>
+        <p id="passenger-status"></p>
         <nav id="stops" aria-label="Pickup locations"></nav>
         <form id="ping-form">
           <label>Your name <input id="name" autocomplete="name" maxlength="60" required></label>
