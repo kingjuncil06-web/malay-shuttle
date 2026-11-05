@@ -32,6 +32,10 @@ MALAY-SHUTTLE displays the seat count for one shuttle. A driver enters the numbe
 | `GET /api/dashboard` | Driver | Reads the seat count and pending alerts in a single request. |
 | `POST /api/trip/end` | Driver | Resets occupied seats to zero and clears pickup alerts together. |
 | `DELETE /api/alerts/{id}` | Driver | Dismisses one pending alert. |
+| `POST /api/alerts/{id}/decline` | Driver | Sends a private “Can’t pick up” reply and removes the pending alert. |
+| `POST /api/pickup-replies` | Passenger with a receipt | Checks for replies to pings sent from the current tab. |
+
+Each new ping returns a private receipt. The passenger’s tab keeps it across reloads and checks for replies during the usual refresh. A duplicate ping never reveals another passenger’s receipt. Redis keeps each reply for 30 minutes after the driver sends it.
 
 ## Shared data
 

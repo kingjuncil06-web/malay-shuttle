@@ -3,6 +3,21 @@ const driver = byId("driver");
 const code = byId("code");
 let selectedStop;
 let alertSignature;
+const receiptStorage = "malay-shuttle-receipts";
+let receipts = [];
+try {
+    receipts = JSON.parse(sessionStorage.getItem(receiptStorage) || "[]");
+} catch {
+    // The current page can still receive replies when browser storage is unavailable.
+}
+
+function saveReceipts() {
+    try {
+        sessionStorage.setItem(receiptStorage, JSON.stringify(receipts));
+    } catch {
+        // Keep receipts in memory for this page.
+    }
+}
 
 async function request(path, method = "GET", body, driverCode, signal) {
     const headers = {};
@@ -13,6 +28,8 @@ async function request(path, method = "GET", body, driverCode, signal) {
     });
     if (!response.ok) {
         const messages = { 400: "Check the values you entered.", 403: "Check the driver code.",
+            404: "This ping is no longer available.",
+            409: "A ping for this name and pickup point is already pending.",
             429: "The alert list is full. Try again later." };
         const error = new Error(messages[response.status] || "The server could not complete the request.");
         error.status = response.status;
@@ -68,17 +85,27 @@ function showAlerts(alerts) {
     for (const alert of alerts) {
         const item = document.createElement("li");
         item.textContent = alert.name + " is waiting at " + alert.stop + ".";
-        const button = document.createElement("button");
-        button.textContent = "Dismiss";
-        button.onclick = async () => {
-            try {
-                await request("/alerts/" + alert.id, "DELETE", undefined, code.value);
-                refresh();
-            } catch (error) {
-                byId("alert-message").textContent = error.message;
-            }
-        };
-        item.append(button);
+        const actions = [["Dismiss", "", "DELETE"]];
+        if (alert.canReply) actions.push(["Can’t pick up", "/decline", "POST"]);
+        for (const [label, suffix, method] of actions) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = label;
+            button.onclick = async () => {
+                const buttons = item.querySelectorAll("button");
+                for (const action of buttons) action.disabled = true;
+                try {
+                    await request("/alerts/" + alert.id + suffix, method, undefined, code.value);
+                    if (suffix) byId("driver-message").textContent = "Passenger notified.";
+                    refresh();
+                } catch (error) {
+                    byId("alert-message").textContent = error.message;
+                } finally {
+                    for (const action of buttons) action.disabled = false;
+                }
+            };
+            item.append(button);
+        }
         list.append(item);
     }
 }
@@ -117,9 +144,36 @@ handleForm("seat-form", "driver-message", async () => {
 
 handleForm("ping-form", "ping-message", async () => {
     const stop = selectedStop;
-    await request("/alerts", "POST", { name: byId("name").value.trim(), stop });
-    return "Ping sent for " + stop + ".";
+    const { receipt } = await request("/alerts", "POST", { name: byId("name").value.trim(), stop });
+    receipts = [...receipts, { receipt, expiresAt: Date.now() + 60 * 60000 }].slice(-10);
+    saveReceipts();
+    return "Ping sent for " + stop + ". Keep this tab open for a reply.";
 });
+
+async function checkPickupReplies(signal) {
+    const active = receipts.filter(({ expiresAt }) => expiresAt > Date.now());
+    if (active.length !== receipts.length) {
+        receipts = active;
+        saveReceipts();
+    }
+    if (!active.length) return;
+    try {
+        const replies = await request("/pickup-replies", "POST",
+            { receipts: active.map(({ receipt }) => receipt) }, undefined, signal);
+        if (signal.aborted) return;
+        for (const stop of Object.values(replies)) {
+            const notice = document.createElement("p");
+            notice.textContent = "The driver can’t pick you up at " + stop + ".";
+            byId("pickup-replies").append(notice);
+        }
+        if (Object.keys(replies).length) {
+            receipts = receipts.filter(({ receipt }) => !Object.hasOwn(replies, receipt));
+            saveReceipts();
+        }
+    } catch {
+        // Retry on the next refresh, independently of seat updates.
+    }
+}
 
 let refreshTimer;
 let pendingRefresh;
@@ -130,6 +184,7 @@ async function refresh() {
     if (document.hidden) return;
     pendingRefresh = new AbortController();
     const { signal } = pendingRefresh;
+    const pickupReplies = checkPickupReplies(signal);
     const enteredCode = driver.open && !byId("status").hidden ? code.value : "";
     const message = byId("alert-message");
     if (!enteredCode) {
@@ -157,6 +212,7 @@ async function refresh() {
     } catch {
         if (!signal.aborted) byId("connection").textContent = "Could not refresh seat counts. Retrying…";
     } finally {
+        await pickupReplies;
         if (!signal.aborted) refreshTimer = setTimeout(refresh, 30000);
     }
 }

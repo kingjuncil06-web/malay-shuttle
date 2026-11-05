@@ -20,6 +20,7 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -37,6 +38,9 @@ public class ShuttleServer {
     private static final String SEATS = PREFIX + "taken";
     private static final String UPDATED_AT = PREFIX + "updated-at";
     private static final String ALERTS = PREFIX + "alerts";
+    private static final String REPLIES = PREFIX + "reply:";
+    private static final String UUID_PATTERN = "[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}";
+    private static final int MAX_RECEIPTS = 10;
     private static final long ALERT_LIFETIME = Duration.ofMinutes(30).toMillis();
     private static final String DRIVER_CODE = System.getenv().getOrDefault("SHUTTLE_DRIVER_CODE", "");
     private static final HttpClient HTTP = HttpClient.newBuilder()
@@ -64,7 +68,7 @@ public class ShuttleServer {
         for _, value in ipairs(alerts) do
             local alert = cjson.decode(value)
             if alert.stop == incoming.stop and alert.normalizedName == incoming.normalizedName then
-                return 1
+                return 2
             end
         end
         if #alerts >= 100 then return 0 end
@@ -74,8 +78,10 @@ public class ShuttleServer {
 
     private record SeatStatus(int taken, int available, List<String> stops, Long updatedAt) {}
     private record Dashboard(SeatStatus status, List<PickupAlert> alerts) {}
-    private record StoredAlert(String id, String name, String stop, String normalizedName, long createdAt) {}
-    private record PickupAlert(String id, String name, String stop) {}
+    private record StoredAlert(String id, String name, String stop, String normalizedName, long createdAt,
+                               String receipt) {}
+    private record PickupAlert(String id, String name, String stop, boolean canReply) {}
+    private record PickupReply(String receipt, String stop) {}
 
     public static void main(String[] args) throws IOException {
         int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
@@ -114,18 +120,64 @@ public class ShuttleServer {
             case "/api/alerts" -> alerts(exchange, method);
             case "/api/dashboard" -> dashboard(exchange);
             case "/api/trip/end" -> endTrip(exchange);
+            case "/api/pickup-replies" -> pickupReplies(exchange);
             default -> {
                 if (!path.startsWith("/api/alerts/")) throw new ApiError(404, "Page not found");
-                requireMethod(exchange, "DELETE");
-                requireDriver(exchange);
-                String id = path.substring("/api/alerts/".length());
-                if (!id.matches("(?i)[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")) {
-                    throw new ApiError(400, "Invalid alert ID");
-                }
-                redis("HDEL", ALERTS, id);
-                exchange.sendResponseHeaders(204, -1);
+                alertAction(exchange, path.substring("/api/alerts/".length()));
             }
         }
+    }
+
+    private static void alertAction(HttpExchange exchange, String path) throws IOException, InterruptedException {
+        boolean decline = path.endsWith("/decline");
+        requireMethod(exchange, decline ? "POST" : "DELETE");
+        requireDriver(exchange);
+        String id = decline ? path.substring(0, path.length() - "/decline".length()) : path;
+        if (!id.matches(UUID_PATTERN)) throw new ApiError(400, "Invalid alert ID");
+        if (decline) {
+            var result = redis("EVAL", """
+                local value = redis.call("HGET", KEYS[1], ARGV[1])
+                if not value then return redis.call("EXISTS", KEYS[2]) end
+                local alert = cjson.decode(value)
+                if not alert.receipt or alert.createdAt <= tonumber(ARGV[2]) then return 0 end
+                redis.call("SET", KEYS[2], cjson.encode({receipt = alert.receipt, stop = alert.stop}), "PX", ARGV[3])
+                redis.call("HDEL", KEYS[1], ARGV[1])
+                return 1
+                """, 2, ALERTS, REPLIES + id, id, System.currentTimeMillis() - ALERT_LIFETIME, ALERT_LIFETIME);
+            if (result.getAsInt() == 0) throw new ApiError(404, "This ping is no longer available to reply to");
+        } else {
+            redis("HDEL", ALERTS, id);
+        }
+        exchange.sendResponseHeaders(204, -1);
+    }
+
+    private static void pickupReplies(HttpExchange exchange) throws IOException, InterruptedException {
+        requireMethod(exchange, "POST");
+        JsonElement value = readBody(exchange).get("receipts");
+        if (value == null || !value.isJsonArray()) throw new ApiError(400, "Invalid receipts");
+        var receipts = value.getAsJsonArray();
+        if (receipts.isEmpty() || receipts.size() > MAX_RECEIPTS) throw new ApiError(400, "Invalid receipts");
+
+        List<String> command = new ArrayList<>();
+        command.add("MGET");
+        for (JsonElement receipt : receipts) {
+            if (!receipt.isJsonPrimitive() || !receipt.getAsJsonPrimitive().isString()
+                    || !receipt.getAsString().matches(UUID_PATTERN + "\\." + UUID_PATTERN)) {
+                throw new ApiError(400, "Invalid receipt");
+            }
+            command.add(REPLIES + receipt.getAsString().substring(0, 36));
+        }
+        var results = redis(command.toArray()).getAsJsonArray();
+        Map<String, String> replies = new LinkedHashMap<>();
+        for (int i = 0; i < results.size(); i++) {
+            if (results.get(i).isJsonNull()) continue;
+            var reply = JSON.fromJson(results.get(i).getAsString(), PickupReply.class);
+            String receipt = receipts.get(i).getAsString();
+            if (MessageDigest.isEqual(bytes(receipt.substring(37)), bytes(reply.receipt()))) {
+                replies.put(receipt, reply.stop());
+            }
+        }
+        sendJson(exchange, 200, replies);
     }
 
     private static void status(HttpExchange exchange, String method) throws IOException, InterruptedException {
@@ -196,11 +248,12 @@ public class ShuttleServer {
         }
         String id = UUID.randomUUID().toString();
         long now = System.currentTimeMillis();
-        var alert = new StoredAlert(id, name, stop, name.toLowerCase(Locale.ROOT), now);
-        if (redis("EVAL", SAVE_ALERT, 1, ALERTS, id, JSON.toJson(alert), now - ALERT_LIFETIME).getAsInt() == 0) {
-            throw new ApiError(429, "Pickup alert list is full");
-        }
-        exchange.sendResponseHeaders(204, -1);
+        String receipt = UUID.randomUUID().toString();
+        var alert = new StoredAlert(id, name, stop, name.toLowerCase(Locale.ROOT), now, receipt);
+        int saved = redis("EVAL", SAVE_ALERT, 1, ALERTS, id, JSON.toJson(alert), now - ALERT_LIFETIME).getAsInt();
+        if (saved == 0) throw new ApiError(429, "Pickup alert list is full");
+        if (saved == 2) throw new ApiError(409, "A ping for this name and stop is already pending");
+        sendJson(exchange, 201, Map.of("receipt", id + "." + receipt));
     }
 
     private static List<PickupAlert> readAlerts(JsonElement result) {
@@ -209,7 +262,8 @@ public class ShuttleServer {
             pending.add(JSON.fromJson(value.getAsString(), StoredAlert.class));
         }
         pending.sort(Comparator.comparingLong(StoredAlert::createdAt));
-        return pending.stream().map(alert -> new PickupAlert(alert.id(), alert.name(), alert.stop())).toList();
+        return pending.stream()
+            .map(alert -> new PickupAlert(alert.id(), alert.name(), alert.stop(), alert.receipt() != null)).toList();
     }
 
     private static JsonElement redis(Object... command) throws IOException, InterruptedException {
