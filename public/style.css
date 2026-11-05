@@ -175,6 +175,24 @@ li button { margin-inline-start: .5rem; }
 #stops button { text-align: left; }
 #ping-form label { flex: 1 1 13rem; }
 
+@media (prefers-reduced-motion: no-preference) {
+  .masthead h1, .masthead-copy { animation: enter .36s ease-out both; }
+  .masthead-copy { animation-delay: .07s; }
+  .route-art { animation: enter .45s .1s ease-out both; }
+  main > section:not([hidden]) { animation: enter .24s ease-out both; }
+  button { transition: background-color .16s ease, border-color .16s ease, translate .16s ease; }
+  button:active:not(:disabled) { translate: 0 1px; }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  button:hover:not(:disabled):not(:active) { translate: 0 -1px; }
+}
+
+@keyframes enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @media (max-width: 36rem) {
   .route-art { display: none; }
 }
