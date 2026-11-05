@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
@@ -40,16 +39,16 @@ public class ShuttleServer {
     private static final String REPLIES = PREFIX + "reply:";
     private static final String UUID_PATTERN = "[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}";
     private static final int MAX_RECEIPTS = 10;
-    private static final long ALERT_LIFETIME = Duration.ofMinutes(30).toMillis();
     private static final HttpClient HTTP = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(3)).build();
 
     private static final String PRUNE_ALERTS = """
-        local function activeAlerts(key, cutoff)
+        local function activeAlerts(key, now)
             local entries = redis.call("HGETALL", key)
             local active = {}
             for i = 1, #entries, 2 do
-                if cjson.decode(entries[i + 1]).createdAt <= cutoff then
+                local alert = cjson.decode(entries[i + 1])
+                if (alert.expiresAt or alert.createdAt + 300000) <= now then
                     redis.call("HDEL", key, entries[i])
                 else
                     active[#active + 1] = entries[i + 1]
@@ -59,20 +58,76 @@ public class ShuttleServer {
         end
         """;
 
-    // Expiry, deduplication, the capacity check, and the write run together in Redis.
-    private static final String SAVE_ALERT = PRUNE_ALERTS + """
-        if redis.call("GET", KEYS[2]) ~= "1" then return redis.error_reply("409:This shuttle is not running") end
-        local alerts = activeAlerts(KEYS[1], tonumber(ARGV[3]))
-        local incoming = cjson.decode(ARGV[2])
-        for _, value in ipairs(alerts) do
+    // The browser-wide limit, cooldown, expiry, and write are checked together.
+    private static final String PASSENGER_STATE = PRUNE_ALERTS + """
+
+        local now, action = tonumber(ARGV[1]), ARGV[2]
+        local raw = redis.call("GET", KEYS[1])
+        local current = raw and cjson.decode(raw) or nil
+        local function alertKey(id) return KEYS[2 + id] end
+        local function currentAlert()
+            if not current or current.expiresAt <= now then return nil end
+            local value = redis.call("HGET", alertKey(current.shuttleId), current.alertId)
+            if not value then return nil end
             local alert = cjson.decode(value)
-            if alert.stop == incoming.stop and alert.normalizedName == incoming.normalizedName then
-                return 2
-            end
+            if alert.passengerId ~= ARGV[3] then return nil end
+            if (alert.expiresAt or alert.createdAt + 300000) <= now then return nil end
+            return alert
         end
-        if #alerts >= 100 then return 0 end
-        redis.call("HSET", KEYS[1], ARGV[1], ARGV[2])
-        return 1
+        local alert = currentAlert()
+        local changed = false
+        local function snapshot()
+            local remaining = math.max(0, redis.call("PTTL", KEYS[2]))
+            return {alert and cjson.encode(current) or false, now + remaining,
+                    current and current.receipt or "", changed and 1 or 0}
+        end
+        if action == "read" then return snapshot() end
+        if action == "create" then
+            local previous = redis.call("GET", KEYS[9])
+            if previous then
+                if previous ~= ARGV[7] then return redis.error_reply("409:This submission ID was already used") end
+                return snapshot()
+            end
+            if alert then return redis.error_reply("409:Cancel your existing request before choosing another shuttle") end
+            if redis.call("PTTL", KEYS[2]) > 0 then
+                return redis.error_reply("429:Wait 60 seconds between pickup requests")
+            end
+            local shuttle = tonumber(ARGV[4])
+            if redis.call("GET", KEYS[5 + shuttle]) ~= "1" then
+                return redis.error_reply("409:This shuttle is not running")
+            end
+            local active = activeAlerts(alertKey(shuttle), now)
+            if #active >= 100 then return redis.error_reply("429:This shuttle has too many pending pickup requests") end
+            local incoming = cjson.decode(ARGV[5])
+            current = {shuttleId = shuttle, alertId = incoming.id, receipt = incoming.id .. "." .. incoming.receipt,
+                       stop = incoming.stop, expiresAt = incoming.expiresAt, confirmedAt = now}
+            redis.call("HSET", alertKey(shuttle), incoming.id, ARGV[5])
+            redis.call("SET", KEYS[1], cjson.encode(current), "PX", 300000)
+            redis.call("SET", KEYS[2], "1", "PX", 60000)
+            redis.call("SET", KEYS[9], ARGV[7], "EX", 3600)
+            alert = incoming
+            changed = true
+            return snapshot()
+        end
+        if not alert then return snapshot() end
+        if current.alertId ~= ARGV[6] then return redis.error_reply("409:Your active pickup request changed. Refresh first") end
+        if action == "cancel" then
+            redis.call("HDEL", alertKey(current.shuttleId), current.alertId)
+            redis.call("DEL", KEYS[1])
+            alert = nil
+            changed = true
+        elseif action == "confirm" then
+            if now - current.confirmedAt < 60000 then
+                return redis.error_reply("429:Wait at least 60 seconds before confirming again")
+            end
+            current.confirmedAt = now
+            current.expiresAt = now + 300000
+            alert.expiresAt = current.expiresAt
+            redis.call("HSET", alertKey(current.shuttleId), current.alertId, cjson.encode(alert))
+            redis.call("SET", KEYS[1], cjson.encode(current), "PX", 300000)
+            changed = true
+        end
+        return snapshot()
         """;
 
     private record Shuttle(int id, String name, String plate) {
@@ -100,7 +155,7 @@ public class ShuttleServer {
         local action, now = ARGV[2], tonumber(ARGV[5])
         local function snapshot()
             return {redis.call("MGET", KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]),
-                    activeAlerts(KEYS[7], now - 1800000), redis.call("LRANGE", KEYS[8], 0, 49)}
+                    activeAlerts(KEYS[7], now), redis.call("LRANGE", KEYS[8], 0, 49)}
         end
         if action == "read" then return snapshot() end
         local fingerprint = cjson.encode({action, ARGV[3], ARGV[4], ARGV[6], ARGV[7], ARGV[8]})
@@ -134,7 +189,7 @@ public class ShuttleServer {
             local entries = redis.call("HGETALL", KEYS[7])
             for i = 1, #entries, 2 do
                 local alert = cjson.decode(entries[i + 1])
-                if alert.createdAt > now - 1800000 then reply(entries[i], alert, "The trip has ended.") end
+                if (alert.expiresAt or alert.createdAt + 300000) > now then reply(entries[i], alert, "The trip has ended.") end
             end
             taken = 0
             redis.call("SET", KEYS[5], "0")
@@ -148,7 +203,7 @@ public class ShuttleServer {
             local value = redis.call("HGET", KEYS[7], ARGV[7])
             if not value then return redis.error_reply("404:This ping is no longer available") end
             local alert = cjson.decode(value)
-            if alert.createdAt <= now - 1800000 then
+            if (alert.expiresAt or alert.createdAt + 300000) <= now then
                 redis.call("HDEL", KEYS[7], ARGV[7])
                 return redis.error_reply("404:This ping has expired")
             end
@@ -182,11 +237,15 @@ public class ShuttleServer {
     private record HistoryEntry(String action, long time, String session, int taken) {}
     private record Dashboard(SeatStatus status, List<PickupAlert> alerts, List<HistoryEntry> history,
                              List<FleetEntry> fleet) {}
-    private record StoredAlert(String id, String name, String stop, String normalizedName, long createdAt,
-                               String receipt, boolean acknowledged) {}
+    private record StoredAlert(String id, String name, String stop, long createdAt,
+                               String receipt, boolean acknowledged, String passengerId, long expiresAt) {}
     private record PickupAlert(String id, String name, String stop, boolean canReply, boolean acknowledged,
                                long createdAt) {}
     private record PickupReply(String receipt, String stop, String message) {}
+    private record ActivePing(int shuttleId, String alertId, String receipt, String stop, long expiresAt,
+                              long confirmedAt) {}
+    private record PassengerState(ActivePing active, long cooldownUntil, long serverTime, String recentReceipt,
+                                  boolean changed) {}
 
     public static void main(String[] args) throws IOException {
         int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
@@ -228,6 +287,9 @@ public class ShuttleServer {
             case "/api/driver/action" -> driverState(exchange, true);
             case "/api/driver/session" -> driverSession(exchange);
             case "/api/pickup-replies" -> pickupReplies(exchange);
+            case "/api/passenger" -> passenger(exchange, "read");
+            case "/api/passenger/cancel" -> passenger(exchange, "cancel");
+            case "/api/passenger/confirm" -> passenger(exchange, "confirm");
             default -> throw new ApiError(404, "Page not found");
         }
     }
@@ -405,24 +467,71 @@ public class ShuttleServer {
         }
     }
 
-    private static void alerts(HttpExchange exchange, String method) throws IOException, InterruptedException {
-        Shuttle shuttle = selectedShuttle(exchange);
 
-        requireMethod(exchange, "POST");
-        JsonObject body = readBody(exchange);
-        String name = stringField(body, "name").strip();
-        String stop = stringField(body, "stop");
-        if (name.isEmpty() || name.length() > 60 || !STOPS.contains(stop)) {
-            throw new ApiError(400, "Invalid name or pickup point");
+    private static String passengerId(HttpExchange exchange, boolean create) {
+        String cookie = exchange.getRequestHeaders().getFirst("Cookie");
+        if (cookie != null) {
+            for (String part : cookie.split(";")) {
+                String item = part.strip();
+                if (item.startsWith("ms_passenger=")) {
+                    String id = item.substring("ms_passenger=".length());
+                    if (id.matches(UUID_PATTERN)) return id;
+                }
+            }
         }
+        if (!create) throw new ApiError(403, "Open the Passenger panel first and enable cookies");
         String id = UUID.randomUUID().toString();
+        String environment = System.getenv().getOrDefault("VERCEL_ENV", "development");
+        String secure = List.of("production", "preview").contains(environment) ? "; Secure" : "";
+        exchange.getResponseHeaders().add("Set-Cookie",
+            "ms_passenger=" + id + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000" + secure);
+        return id;
+    }
+
+    private static void passenger(HttpExchange exchange, String action) throws IOException, InterruptedException {
+        requireMethod(exchange, action.equals("read") ? "GET" : "POST");
+        JsonObject body = action.equals("read") ? new JsonObject() : readBody(exchange);
+        String expectedId = stringField(body, "alertId");
+        if (!action.equals("read") && !expectedId.matches(UUID_PATTERN)) {
+            throw new ApiError(400, "Invalid pickup request");
+        }
+        sendJson(exchange, 200, passengerState(exchange, action, body, null));
+    }
+
+    private static PassengerState passengerState(HttpExchange exchange, String action, JsonObject body,
+                                                 Shuttle shuttle) throws IOException, InterruptedException {
+        String browser = passengerId(exchange, action.equals("read"));
         long now = System.currentTimeMillis();
-        String receipt = UUID.randomUUID().toString();
-        var alert = new StoredAlert(id, name, stop, name.toLowerCase(Locale.ROOT), now, receipt, false);
-        int saved = redis("EVAL", SAVE_ALERT, 2, shuttle.key("alerts"), shuttle.key("running"), id, JSON.toJson(alert), now - ALERT_LIFETIME).getAsInt();
-        if (saved == 0) throw new ApiError(429, "Pickup alert list is full");
-        if (saved == 2) throw new ApiError(409, "A ping for this name and stop is already pending");
-        sendJson(exchange, 201, Map.of("receipt", id + "." + receipt));
+        String operationId = stringField(body, "operationId");
+        String data = "";
+        String fingerprint = "";
+        if (action.equals("create")) {
+            if (!operationId.matches(UUID_PATTERN)) throw new ApiError(400, "Invalid submission ID");
+            String name = stringField(body, "name").strip();
+            String stop = stringField(body, "stop");
+            if (name.isEmpty() || name.length() > 60 || !STOPS.contains(stop)) {
+                throw new ApiError(400, "Invalid name or pickup point");
+            }
+            var alert = new StoredAlert(UUID.randomUUID().toString(), name, stop,
+                now, UUID.randomUUID().toString(), false, browser, now + 300000);
+            data = JSON.toJson(alert);
+            fingerprint = JSON.toJson(List.of(shuttle.id(), name, stop));
+        }
+        List<Object> command = new ArrayList<>(List.of("EVAL", PASSENGER_STATE, 9,
+            PREFIX + "passenger:" + browser, PREFIX + "cooldown:" + browser));
+        for (Shuttle vehicle : SHUTTLES) command.add(vehicle.key("alerts"));
+        for (Shuttle vehicle : SHUTTLES) command.add(vehicle.key("running"));
+        command.addAll(List.of(PREFIX + "ping-operation:" + browser + ":" + operationId,
+            now, action, browser, shuttle == null ? 1 : shuttle.id(), data, stringField(body, "alertId"), fingerprint));
+        var result = redis(command.toArray()).getAsJsonArray();
+        ActivePing active = result.get(0).isJsonNull() ? null : JSON.fromJson(result.get(0).getAsString(), ActivePing.class);
+        return new PassengerState(active, result.get(1).getAsLong(), now, result.get(2).getAsString(),
+            result.get(3).getAsInt() == 1);
+    }
+
+    private static void alerts(HttpExchange exchange, String method) throws IOException, InterruptedException {
+        requireMethod(exchange, "POST");
+        sendJson(exchange, 201, passengerState(exchange, "create", readBody(exchange), selectedShuttle(exchange)));
     }
 
     private static List<PickupAlert> readAlerts(JsonElement result) {

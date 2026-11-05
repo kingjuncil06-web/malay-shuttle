@@ -9,6 +9,10 @@ let driverStatus;
 let busy = false;
 let refreshTimer;
 let pendingRefresh;
+let passengerState;
+let passengerBusy = false;
+let passengerClockOffset = 0;
+let pendingPing = readStorage("malay-shuttle-pending-ping", null);
 
 function readStorage(key, fallback) {
     try {
@@ -125,7 +129,53 @@ function renderFleet() {
     }
     const selected = fleet.find(entry => entry.shuttle.id === passengerShuttle);
     byId("ping-target").textContent = "Sending to " + selected.shuttle.name + " · " + selected.shuttle.plate;
-    byId("ping-button").disabled = !selectedStop || !selected.status.running;
+    updatePassengerControls();
+}
+
+function passengerNow() {
+    return Date.now() + passengerClockOffset;
+}
+
+function updatePassengerControls() {
+    const now = passengerNow();
+    const active = passengerState?.active;
+    const waiting = active && active.expiresAt > now;
+    byId("active-ping").hidden = !waiting;
+    if (waiting) {
+        const description = "Waiting for Shuttle " + active.shuttleId +
+            " at " + active.stop + ". Confirm before " + new Date(active.expiresAt).toLocaleTimeString() + ".";
+        if (byId("active-ping-description").textContent !== description) {
+            byId("active-ping-description").textContent = description;
+        }
+    }
+    byId("confirm-ping").disabled = passengerBusy || !waiting || now - active.confirmedAt < 60000;
+    byId("cancel-ping").disabled = passengerBusy || !waiting;
+    const remaining = Math.max(0, Math.ceil(((passengerState?.cooldownUntil || 0) - now) / 1000));
+    byId("passenger-status").textContent = !passengerState ? "Checking your pickup requests…" :
+        active && !waiting ? "Your pickup request expired. Send a new ping if you are still waiting." :
+        waiting && now - active.confirmedAt >= 4 * 60000 ? "Please tap Still waiting to keep your request active." :
+        waiting ? "One request is active. Cancel it before choosing another shuttle." :
+        remaining ? "You can send another ping in " + remaining + " seconds." : "";
+    const selected = fleet.find(entry => entry.shuttle.id === passengerShuttle);
+    byId("ping-button").disabled = passengerBusy || !passengerState || Boolean(waiting) ||
+        remaining > 0 || !selectedStop || !selected?.status.running;
+}
+
+function rememberReceipt(receipt) {
+    if (receipt && !receipts.some(item => item.receipt === receipt)) {
+        receipts.push({ receipt, expiresAt: Date.now() + 60 * 60000 });
+        saveStorage("malay-shuttle-receipts", receipts);
+    }
+}
+
+function showPassengerState(state) {
+    if (passengerState?.active && !state.active && passengerState.active.expiresAt <= state.serverTime) {
+        byId("ping-message").textContent = "Your pickup request expired. Send another if you are still waiting.";
+    }
+    passengerState = state;
+    passengerClockOffset = state.serverTime - Date.now();
+    rememberReceipt(state.active?.receipt || state.recentReceipt);
+    updatePassengerControls();
 }
 
 function makeStops(stops) {
@@ -299,25 +349,71 @@ byId("end-trip").onclick = () => {
 
 byId("ping-form").onsubmit = async event => {
     event.preventDefault();
-    const button = byId("ping-button");
-    button.disabled = true;
+    if (passengerBusy) return;
+    passengerBusy = true;
+    pendingRefresh?.abort();
+    updatePassengerControls();
     const message = byId("ping-message");
     const shuttleId = passengerShuttle;
     const stop = selectedStop;
     try {
-        if (receipts.filter(item => item.expiresAt > Date.now()).length >= 10) {
-            throw new Error("This tab is already tracking ten requests. Wait for them to expire.");
+        const name = byId("name").value.trim();
+        const intent = JSON.stringify({ shuttleId, name, stop });
+        if (!pendingPing || pendingPing.intent !== intent) {
+            pendingPing = { intent, body: { name, stop, operationId: crypto.randomUUID() } };
+            saveStorage("malay-shuttle-pending-ping", pendingPing);
         }
-        const { receipt } = await request("/alerts", "POST", { name: byId("name").value.trim(), stop }, shuttleId);
-        receipts.push({ receipt, expiresAt: Date.now() + 60 * 60000 });
-        saveStorage("malay-shuttle-receipts", receipts);
-        message.textContent = "Ping sent to Shuttle " + shuttleId + " for " + stop + ". Keep this tab open for replies.";
+        const state = await request("/alerts", "POST", pendingPing.body, shuttleId);
+        showPassengerState(state);
+        pendingPing = null;
+        saveStorage("malay-shuttle-pending-ping", null);
+        message.textContent = state.active ? "Request active. Confirm you are still waiting within five minutes." :
+            "This submission was already processed. Check your replies before sending another.";
     } catch (error) {
+        if (error.status && error.status < 500) {
+            pendingPing = null;
+            saveStorage("malay-shuttle-pending-ping", null);
+        }
         message.textContent = error.message;
     } finally {
-        renderFleet();
+        passengerBusy = false;
+        updatePassengerControls();
+        refresh();
     }
 };
+
+async function passengerAction(action) {
+    if (passengerBusy || !passengerState?.active) return;
+    const active = passengerState.active;
+    passengerBusy = true;
+    pendingRefresh?.abort();
+    updatePassengerControls();
+    try {
+        const state = await request("/passenger/" + action, "POST", { alertId: active.alertId });
+        showPassengerState(state);
+        if (action === "cancel" && state.changed) {
+            const receipt = receipts.find(item => item.receipt === active.receipt);
+            if (receipt) {
+                receipt.message = "You cancelled your pickup request.";
+                receipt.terminal = true;
+                saveStorage("malay-shuttle-receipts", receipts);
+                showReplies();
+            }
+        }
+        byId("ping-message").textContent = !state.changed ? "Your request is no longer active." :
+            action === "cancel" ? "Request cancelled." : "Confirmed. Your request is active for another five minutes.";
+    } catch (error) {
+        byId("ping-message").textContent = error.message;
+    } finally {
+        passengerBusy = false;
+        updatePassengerControls();
+        refresh();
+    }
+}
+
+byId("confirm-ping").onclick = () => passengerAction("confirm");
+byId("cancel-ping").onclick = () => passengerAction("cancel");
+setInterval(updatePassengerControls, 1000);
 
 function showReplies() {
     const list = byId("pickup-replies");
@@ -332,13 +428,21 @@ function showReplies() {
 async function checkPickupReplies(signal) {
     receipts = receipts.filter(item => item.expiresAt > Date.now());
     showReplies();
-    if (!receipts.length) return;
     try {
+        const state = await request("/passenger", "GET", undefined, undefined, signal);
+        if (signal.aborted) return;
+        showPassengerState(state);
+        const pending = receipts.filter(item => !item.terminal).slice(-10);
+        if (!pending.length) {
+            byId("reply-connection").textContent = "";
+            return;
+        }
         const replies = await request("/pickup-replies", "POST",
-            { receipts: receipts.map(item => item.receipt) }, undefined, signal);
+            { receipts: pending.map(item => item.receipt) }, undefined, signal);
         if (signal.aborted) return;
         for (const item of receipts) {
             if (Object.hasOwn(replies, item.receipt)) item.message = replies[item.receipt];
+            if (state.recentReceipt === item.receipt && !state.active) item.terminal = true;
         }
         saveStorage("malay-shuttle-receipts", receipts);
         showReplies();
@@ -351,7 +455,7 @@ async function checkPickupReplies(signal) {
 async function refresh() {
     clearTimeout(refreshTimer);
     pendingRefresh?.abort();
-    if (document.hidden || busy) return;
+    if (document.hidden || busy || passengerBusy) return;
     pendingRefresh = new AbortController();
     const { signal } = pendingRefresh;
     const replies = checkPickupReplies(signal);
