@@ -1,6 +1,5 @@
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
@@ -26,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.concurrent.Executors;
 
 public class ShuttleServer {
@@ -39,6 +39,7 @@ public class ShuttleServer {
     private static final String REPLIES = PREFIX + "reply:";
     private static final String UUID_PATTERN = "[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}";
     private static final int MAX_RECEIPTS = 10;
+    private static final Pattern REDIS_ERROR = Pattern.compile("(400|403|404|409|429):(.*)", Pattern.DOTALL);
     private static final HttpClient HTTP = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(3)).build();
 
@@ -267,7 +268,7 @@ public class ShuttleServer {
 
             exchange.getResponseHeaders().set("Cache-Control", "no-store");
             try {
-                routeApi(exchange, path, method);
+                routeApi(exchange, path);
             } catch (ApiError error) {
                 sendJson(exchange, error.status, Map.of("error", error.getMessage()));
             } catch (InterruptedException | IOException | RuntimeException error) {
@@ -277,12 +278,12 @@ public class ShuttleServer {
         }
     }
 
-    private static void routeApi(HttpExchange exchange, String path, String method)
+    private static void routeApi(HttpExchange exchange, String path)
             throws IOException, InterruptedException {
         switch (path) {
             case "/api/shuttles" -> fleet(exchange);
             case "/api/status" -> status(exchange);
-            case "/api/alerts" -> alerts(exchange, method);
+            case "/api/alerts" -> alerts(exchange);
             case "/api/dashboard" -> driverState(exchange, false);
             case "/api/driver/action" -> driverState(exchange, true);
             case "/api/driver/session" -> driverSession(exchange);
@@ -379,12 +380,10 @@ public class ShuttleServer {
         List<String> command = new ArrayList<>();
         command.add("MGET");
         for (Shuttle shuttle : SHUTTLES) command.addAll(statusKeys(shuttle));
-        var values = redis(command.toArray()).getAsJsonArray();
+        var values = redis(command.toArray()).getAsJsonArray().asList();
         List<FleetEntry> result = new ArrayList<>();
         for (int i = 0; i < SHUTTLES.size(); i++) {
-            var state = new JsonArray();
-            for (int j = 0; j < 5; j++) state.add(values.get(i * 5 + j));
-            result.add(new FleetEntry(SHUTTLES.get(i), readStatus(state)));
+            result.add(new FleetEntry(SHUTTLES.get(i), readStatus(values.subList(i * 5, i * 5 + 5))));
         }
         return result;
     }
@@ -399,11 +398,10 @@ public class ShuttleServer {
         List<String> command = new ArrayList<>();
         command.add("MGET");
         command.addAll(statusKeys(selectedShuttle(exchange)));
-        sendJson(exchange, 200, readStatus(redis(command.toArray())));
+        sendJson(exchange, 200, readStatus(redis(command.toArray()).getAsJsonArray().asList()));
     }
 
-    private static SeatStatus readStatus(JsonElement result) {
-        var values = result.getAsJsonArray();
+    private static SeatStatus readStatus(List<JsonElement> values) {
         int taken = values.get(0).isJsonNull() ? 0 : values.get(0).getAsInt();
         Long updatedAt = values.get(1).isJsonNull() ? null : values.get(1).getAsLong();
         String trip = values.get(2).isJsonNull() ? "" : values.get(2).getAsString();
@@ -456,7 +454,8 @@ public class ShuttleServer {
         for (JsonElement entry : snapshot.get(2).getAsJsonArray()) {
             history.add(JSON.fromJson(entry.getAsString(), HistoryEntry.class));
         }
-        sendJson(exchange, 200, new Dashboard(readStatus(snapshot.get(0)), readAlerts(snapshot.get(1)), history, fleetData()));
+        sendJson(exchange, 200, new Dashboard(readStatus(snapshot.get(0).getAsJsonArray().asList()),
+            readAlerts(snapshot.get(1)), history, fleetData()));
     }
 
     private static String sessionReference(String token) {
@@ -529,18 +528,15 @@ public class ShuttleServer {
             result.get(3).getAsInt() == 1);
     }
 
-    private static void alerts(HttpExchange exchange, String method) throws IOException, InterruptedException {
+    private static void alerts(HttpExchange exchange) throws IOException, InterruptedException {
         requireMethod(exchange, "POST");
         sendJson(exchange, 201, passengerState(exchange, "create", readBody(exchange), selectedShuttle(exchange)));
     }
 
     private static List<PickupAlert> readAlerts(JsonElement result) {
-        List<StoredAlert> pending = new ArrayList<>();
-        for (JsonElement value : result.getAsJsonArray()) {
-            pending.add(JSON.fromJson(value.getAsString(), StoredAlert.class));
-        }
-        pending.sort(Comparator.comparingLong(StoredAlert::createdAt));
-        return pending.stream()
+        return result.getAsJsonArray().asList().stream()
+            .map(value -> JSON.fromJson(value.getAsString(), StoredAlert.class))
+            .sorted(Comparator.comparingLong(StoredAlert::createdAt))
             .map(alert -> new PickupAlert(alert.id(), alert.name(), alert.stop(), alert.receipt() != null, alert.acknowledged(), alert.createdAt())).toList();
     }
 
@@ -556,11 +552,8 @@ public class ShuttleServer {
         var response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
         JsonObject body = JSON.fromJson(response.body(), JsonObject.class);
         if (body != null && body.has("error")) {
-            String message = body.get("error").getAsString();
-            if (message.matches("(?s).*(400|403|404|409|429):.*")) {
-                var matcher = java.util.regex.Pattern.compile("(400|403|404|409|429):(.*)", java.util.regex.Pattern.DOTALL).matcher(message);
-                if (matcher.find()) throw new ApiError(Integer.parseInt(matcher.group(1)), matcher.group(2));
-            }
+            var matcher = REDIS_ERROR.matcher(body.get("error").getAsString());
+            if (matcher.find()) throw new ApiError(Integer.parseInt(matcher.group(1)), matcher.group(2));
         }
         if (body == null || body.has("error") || !body.has("result")) {
             throw new IOException("Redis command failed");

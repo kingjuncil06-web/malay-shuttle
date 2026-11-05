@@ -116,15 +116,17 @@ function renderFleet() {
     for (const [i, { shuttle, status }] of fleet.entries()) {
         const button = byId("fleet").children[i];
         button.setAttribute("aria-pressed", String(shuttle.id === passengerShuttle));
-        button.replaceChildren();
-        for (const [tag, text] of [
+        const lines = [
             ["strong", shuttle.name], ["span", "Sample plate · " + shuttle.plate],
             ["b", countLabel(status)], ["span", status.taken + " of 15 seats taken"],
             ["small", "Updated · " + (status.updatedAt ? new Date(status.updatedAt).toLocaleString() : "Unconfirmed")]
-        ]) {
-            const line = document.createElement(tag);
-            line.textContent = text;
-            button.append(line);
+        ];
+        if (!button.children.length) {
+            for (const [tag] of lines) button.append(document.createElement(tag));
+        }
+        for (const [index, [, text]] of lines.entries()) {
+            const line = button.children[index];
+            if (line.textContent !== text) line.textContent = text;
         }
     }
     const selected = fleet.find(entry => entry.shuttle.id === passengerShuttle);
@@ -132,12 +134,8 @@ function renderFleet() {
     updatePassengerControls();
 }
 
-function passengerNow() {
-    return Date.now() + passengerClockOffset;
-}
-
 function updatePassengerControls() {
-    const now = passengerNow();
+    const now = Date.now() + passengerClockOffset;
     const active = passengerState?.active;
     const waiting = active && active.expiresAt > now;
     byId("active-ping").hidden = !waiting;
@@ -199,13 +197,10 @@ function updateControls() {
     driverShuttle.disabled = busy;
     for (const button of byId("unlock-form").querySelectorAll("button")) button.disabled = busy;
     byId("release").disabled = busy || !unlocked;
-    for (const button of byId("seat-form").querySelectorAll("button")) {
+    for (const button of document.querySelectorAll("#seat-form button, #alerts button")) {
         button.disabled = busy || !unlocked || !driverStatus?.running;
     }
     byId("start-trip").disabled = busy || !unlocked || !driverStatus || driverStatus.running;
-    for (const button of byId("alerts").querySelectorAll("button")) {
-        button.disabled = busy || !unlocked || !driverStatus?.running;
-    }
 }
 
 function showAlerts(alerts) {
@@ -257,18 +252,13 @@ function showDashboard(data) {
     }
 }
 
-async function unlock(takeover) {
-    if (busy || !code.reportValidity()) return;
-    if (takeover && !confirm("Take control of this shuttle? The other device will lose access.")) return;
+async function driverTask(work) {
+    if (busy) return;
     busy = true;
     pendingRefresh?.abort();
     updateControls();
     try {
-        const { token } = await request("/driver/session", "POST", { code: code.value, takeover }, driverShuttle.value);
-        sessions[driverShuttle.value] = token;
-        saveStorage("malay-shuttle-driver-sessions", sessions);
-        code.value = "";
-        byId("driver-message").textContent = "Shuttle unlocked for this device.";
+        await work();
     } catch (error) {
         byId("driver-message").textContent = error.message;
     } finally {
@@ -278,28 +268,28 @@ async function unlock(takeover) {
     }
 }
 
+async function unlock(takeover) {
+    if (busy || !code.reportValidity()) return;
+    if (takeover && !confirm("Take control of this shuttle? The other device will lose access.")) return;
+    return driverTask(async () => {
+        const { token } = await request("/driver/session", "POST", { code: code.value, takeover }, driverShuttle.value);
+        sessions[driverShuttle.value] = token;
+        saveStorage("malay-shuttle-driver-sessions", sessions);
+        code.value = "";
+        byId("driver-message").textContent = "Shuttle unlocked for this device.";
+    });
+}
+
 byId("unlock-form").onsubmit = event => { event.preventDefault(); unlock(false); };
 byId("takeover").onclick = () => unlock(true);
-byId("release").onclick = async () => {
-    if (busy) return;
-    busy = true;
-    pendingRefresh?.abort();
-    updateControls();
-    try {
-        await request("/driver/session", "DELETE", undefined, driverShuttle.value);
-        delete sessions[driverShuttle.value];
-        saveStorage("malay-shuttle-driver-sessions", sessions);
-        byId("driver-message").textContent = "Control released.";
-        showAlerts([]);
-        byId("history").replaceChildren();
-    } catch (error) {
-        byId("driver-message").textContent = error.message;
-    } finally {
-        busy = false;
-        updateControls();
-        refresh();
-    }
-};
+byId("release").onclick = () => driverTask(async () => {
+    await request("/driver/session", "DELETE", undefined, driverShuttle.value);
+    delete sessions[driverShuttle.value];
+    saveStorage("malay-shuttle-driver-sessions", sessions);
+    byId("driver-message").textContent = "Control released.";
+    showAlerts([]);
+    byId("history").replaceChildren();
+});
 
 async function driverAction(action, fields = {}) {
     if (busy || !driverStatus) return;
@@ -310,28 +300,22 @@ async function driverAction(action, fields = {}) {
             tripId: driverStatus.tripId, version: String(driverStatus.version) } };
         saveStorage("malay-shuttle-driver-operation", pendingAction);
     }
-    busy = true;
-    pendingRefresh?.abort();
-    updateControls();
-    try {
-        const data = await request("/driver/action", "POST", pendingAction.body, shuttleId);
-        pendingAction = null;
-        saveStorage("malay-shuttle-driver-operation", null);
-        showDashboard(data);
-        byId("seat-input").value = data.status.taken;
-        byId("driver-message").textContent = "Action saved.";
-    } catch (error) {
-        if (error.status && error.status < 500) {
+    return driverTask(async () => {
+        try {
+            const data = await request("/driver/action", "POST", pendingAction.body, shuttleId);
             pendingAction = null;
             saveStorage("malay-shuttle-driver-operation", null);
+            showDashboard(data);
+            byId("seat-input").value = data.status.taken;
+            byId("driver-message").textContent = "Action saved.";
+        } catch (error) {
+            if (error.status && error.status < 500) {
+                pendingAction = null;
+                saveStorage("malay-shuttle-driver-operation", null);
+            }
+            throw new Error(error.message + (error.status ? "" : " If the result is uncertain, retry the same action."));
         }
-        byId("driver-message").textContent = error.message +
-            (error.status ? "" : " If the result is uncertain, retry the same action.");
-    } finally {
-        busy = false;
-        updateControls();
-        refresh();
-    }
+    });
 }
 
 byId("seat-form").onsubmit = event => {

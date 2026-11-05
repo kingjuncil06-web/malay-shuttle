@@ -48,7 +48,6 @@ body {
 
 h1, h2 { margin: 0; line-height: 1; letter-spacing: -.055em; }
 
-h1 { font-size: clamp(1.9rem, 7vw, 5.4rem); }
 .brand { display: flex; align-items: center; gap: clamp(.6rem, 2vw, 1.25rem); }
 .brand h1 { font-size: clamp(1.25rem, 5.5vw, 4.6rem); }
 .brand-logo { width: clamp(2.75rem, 6.5vw, 5rem); height: auto; flex: none; border-radius: 18%; }
@@ -73,8 +72,6 @@ nav, form { display: flex; flex-wrap: wrap; gap: .65rem; }
 
 .view-nav {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-bottom: 1px solid var(--panel);
   padding-bottom: .75rem;
 }
 
@@ -89,7 +86,6 @@ nav, form { display: flex; flex-wrap: wrap; gap: .65rem; }
 .view-nav span { font-size: .75rem; font-variant-numeric: tabular-nums; }
 
 section {
-  margin-top: .75rem;
   padding: clamp(1rem, 3vw, 2rem);
   background: var(--white);
   border: 1px solid var(--panel);
@@ -187,7 +183,6 @@ li button { margin-inline-start: .5rem; }
 .workspace { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: 1rem; align-items: start; }
 .panel-area { min-width: 0; }
 .workspace .view-nav { grid-template-columns: 1fr; border: 0; position: sticky; top: 1rem; }
-.panel-area section { margin-top: 0; }
 .fleet { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; }
 .shuttle-card { display: grid; gap: .4rem; text-align: left; min-width: 0; padding: 1rem .75rem; }
 .shuttle-card span, .shuttle-card small { font-size: .75rem; font-weight: 500; }
@@ -203,6 +198,7 @@ li button { margin-inline-start: .5rem; }
 
 @media (max-width: 36rem) {
   .fleet { grid-template-columns: 1fr; }
+  .route-art { display: none; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -222,10 +218,6 @@ li button { margin-inline-start: .5rem; }
 @keyframes enter {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
-}
-
-@media (max-width: 36rem) {
-  .route-art { display: none; }
 }
 
 @media (max-width: 26rem) {
