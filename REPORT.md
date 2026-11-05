@@ -29,10 +29,12 @@ MALAY-SHUTTLE displays the seat count for one shuttle. A driver enters the numbe
 | `PUT /api/status` | Driver | Saves the occupied seat count. |
 | `POST /api/alerts` | Passenger | Sends a name and the selected pickup location. |
 | `GET /api/alerts` | Driver | Reads pending alerts. |
+| `GET /api/dashboard` | Driver | Reads the seat count and pending alerts in a single request. |
+| `POST /api/trip/end` | Driver | Resets occupied seats to zero and clears pickup alerts together. |
 | `DELETE /api/alerts/{id}` | Driver | Dismisses one pending alert. |
 
 ## Shared data
 
-On Vercel, the Java server reads and writes shared state in Upstash Redis. The seat count and up to 100 pending alerts survive container restarts. Alerts stay pending until the driver dismisses them. Production, Preview, and local development use separate Redis key prefixes.
+On Vercel, the Java server reads and writes shared state in Upstash Redis. The seat count and its last-updated timestamp survive container restarts. Counts saved before the timestamp feature show a dash until the next update. Up to 100 pickup alerts can be pending at once. Pings expire after 30 minutes and are removed on the next alert read or submission. The driver can dismiss an alert sooner or clear all alerts with **End trip**. Production, Preview, and local development use separate Redis key prefixes.
 
 Passengers type their own names. The driver code is checked on the server before the driver can update seats, view names, or dismiss alerts.

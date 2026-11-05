@@ -4,17 +4,19 @@ const code = byId("code");
 let selectedStop;
 let alertSignature;
 
-async function request(path, method = "GET", body, driverCode) {
+async function request(path, method = "GET", body, driverCode, signal) {
     const headers = {};
     if (body) headers["Content-Type"] = "application/json";
     if (driverCode) headers["X-Driver-Code"] = driverCode;
     const response = await fetch("/api" + path, {
-        method, headers, body: body ? JSON.stringify(body) : undefined, cache: "no-store"
+        method, headers, body: body ? JSON.stringify(body) : undefined, cache: "no-store", signal
     });
     if (!response.ok) {
         const messages = { 400: "Check the values you entered.", 403: "Check the driver code.",
             429: "The alert list is full. Try again later." };
-        throw new Error(messages[response.status] || "The server could not complete the request.");
+        const error = new Error(messages[response.status] || "The server could not complete the request.");
+        error.status = response.status;
+        throw error;
     }
     if (response.status !== 204) return response.json();
 }
@@ -32,10 +34,12 @@ for (const button of views) {
     };
 }
 
-function showStatus({ taken, available, stops }) {
+function showStatus({ taken, available, stops, updatedAt }) {
     byId("taken").textContent = taken;
     byId("available").textContent = available;
     byId("seat-input").max = taken + available;
+    byId("seat-updated").textContent = "Seat count last updated: " +
+        (updatedAt ? new Date(updatedAt).toLocaleString() : "—");
     byId("connection").textContent = "";
     const stopTabs = byId("stops");
     if (stopTabs.childElementCount) return;
@@ -69,7 +73,7 @@ function showAlerts(alerts) {
         button.onclick = async () => {
             try {
                 await request("/alerts/" + alert.id, "DELETE", undefined, code.value);
-                await refreshAlerts();
+                refresh();
             } catch (error) {
                 byId("alert-message").textContent = error.message;
             }
@@ -78,31 +82,6 @@ function showAlerts(alerts) {
         list.append(item);
     }
 }
-
-async function refreshAlerts() {
-    const enteredCode = code.value;
-    const message = byId("alert-message");
-    if (document.hidden || byId("status").hidden) return;
-    if (!driver.open || !enteredCode) {
-        showAlerts([]);
-        message.textContent = "Enter the driver code to see waiting passengers.";
-        return;
-    }
-    try {
-        const alerts = await request("/alerts", "GET", undefined, enteredCode);
-        if (code.value !== enteredCode || !driver.open) return;
-        showAlerts(alerts);
-        message.textContent = alerts.length ? alerts.length + " waiting." : "No pickup alerts.";
-    } catch (error) {
-        if (code.value !== enteredCode || !driver.open) return;
-        showAlerts([]);
-        message.textContent = error.message;
-    }
-}
-
-code.oninput = () => showAlerts([]);
-code.onchange = refreshAlerts;
-driver.ontoggle = refreshAlerts;
 
 function handleForm(formId, messageId, submit) {
     const form = byId(formId);
@@ -122,10 +101,18 @@ function handleForm(formId, messageId, submit) {
     };
 }
 
+const endTrip = byId("end-trip");
+const updateSeats = byId("seat-form").querySelector("button");
 handleForm("seat-form", "driver-message", async () => {
-    const status = await request("/status", "PUT", { taken: byId("seat-input").valueAsNumber }, code.value);
-    showStatus(status);
-    return "Seat count updated.";
+    endTrip.disabled = true;
+    try {
+        const status = await request("/status", "PUT", { taken: byId("seat-input").valueAsNumber }, code.value);
+        showStatus(status);
+        refresh();
+        return "Seat count updated.";
+    } finally {
+        endTrip.disabled = false;
+    }
 });
 
 handleForm("ping-form", "ping-message", async () => {
@@ -135,21 +122,67 @@ handleForm("ping-form", "ping-message", async () => {
 });
 
 let refreshTimer;
-let refreshing = false;
+let pendingRefresh;
 
 async function refresh() {
     clearTimeout(refreshTimer);
-    if (document.hidden || refreshing) return;
-    refreshing = true;
-    try {
-        showStatus(await request("/status"));
-    } catch {
-        byId("connection").textContent = "Could not refresh seat counts. Retrying…";
+    pendingRefresh?.abort();
+    if (document.hidden) return;
+    pendingRefresh = new AbortController();
+    const { signal } = pendingRefresh;
+    const enteredCode = driver.open && !byId("status").hidden ? code.value : "";
+    const message = byId("alert-message");
+    if (!enteredCode) {
+        showAlerts([]);
+        message.textContent = "Enter the driver code to see waiting passengers.";
     }
-    await refreshAlerts();
-    refreshing = false;
-    if (!document.hidden) refreshTimer = setTimeout(refresh, 30000);
+    try {
+        if (enteredCode) {
+            try {
+                const { status, alerts } = await request("/dashboard", "GET", undefined, enteredCode, signal);
+                if (signal.aborted || code.value !== enteredCode) return;
+                showStatus(status);
+                showAlerts(alerts);
+                message.textContent = alerts.length ? alerts.length + " waiting." : "No pickup alerts.";
+                return;
+            } catch (error) {
+                if (signal.aborted || code.value !== enteredCode) return;
+                showAlerts([]);
+                message.textContent = error.message;
+                if (error.status !== 403) throw error;
+            }
+        }
+        const status = await request("/status", "GET", undefined, undefined, signal);
+        if (!signal.aborted) showStatus(status);
+    } catch {
+        if (!signal.aborted) byId("connection").textContent = "Could not refresh seat counts. Retrying…";
+    } finally {
+        if (!signal.aborted) refreshTimer = setTimeout(refresh, 30000);
+    }
 }
+
+code.oninput = () => showAlerts([]);
+code.onchange = refresh;
+driver.ontoggle = refresh;
+
+endTrip.onclick = async () => {
+    if (!code.reportValidity() || !confirm("End this trip? This resets occupied seats and clears all pickup pings.")) return;
+    endTrip.disabled = true;
+    updateSeats.disabled = true;
+    const message = byId("driver-message");
+    try {
+        showStatus(await request("/trip/end", "POST", undefined, code.value));
+        byId("seat-input").value = "";
+        showAlerts([]);
+        message.textContent = "Trip ended. Seats and pickup pings reset.";
+        refresh();
+    } catch (error) {
+        message.textContent = error.message;
+    } finally {
+        endTrip.disabled = false;
+        updateSeats.disabled = false;
+    }
+};
 
 document.addEventListener("visibilitychange", refresh);
 refresh();

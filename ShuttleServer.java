@@ -35,14 +35,31 @@ public class ShuttleServer {
     private static final String PREFIX = "malay-shuttle:"
         + System.getenv().getOrDefault("VERCEL_ENV", "development") + ":";
     private static final String SEATS = PREFIX + "taken";
+    private static final String UPDATED_AT = PREFIX + "updated-at";
     private static final String ALERTS = PREFIX + "alerts";
+    private static final long ALERT_LIFETIME = Duration.ofMinutes(30).toMillis();
     private static final String DRIVER_CODE = System.getenv().getOrDefault("SHUTTLE_DRIVER_CODE", "");
     private static final HttpClient HTTP = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(3)).build();
 
-    // Deduplication, the capacity check, and the write run together in Redis.
-    private static final String SAVE_ALERT = """
-        local alerts = redis.call("HVALS", KEYS[1])
+    private static final String PRUNE_ALERTS = """
+        local function activeAlerts(key, cutoff)
+            local entries = redis.call("HGETALL", key)
+            local active = {}
+            for i = 1, #entries, 2 do
+                if cjson.decode(entries[i + 1]).createdAt <= cutoff then
+                    redis.call("HDEL", key, entries[i])
+                else
+                    active[#active + 1] = entries[i + 1]
+                end
+            end
+            return active
+        end
+        """;
+
+    // Expiry, deduplication, the capacity check, and the write run together in Redis.
+    private static final String SAVE_ALERT = PRUNE_ALERTS + """
+        local alerts = activeAlerts(KEYS[1], tonumber(ARGV[3]))
         local incoming = cjson.decode(ARGV[2])
         for _, value in ipairs(alerts) do
             local alert = cjson.decode(value)
@@ -55,6 +72,8 @@ public class ShuttleServer {
         return 1
         """;
 
+    private record SeatStatus(int taken, int available, List<String> stops, Long updatedAt) {}
+    private record Dashboard(SeatStatus status, List<PickupAlert> alerts) {}
     private record StoredAlert(String id, String name, String stop, String normalizedName, long createdAt) {}
     private record PickupAlert(String id, String name, String stop) {}
 
@@ -78,40 +97,44 @@ public class ShuttleServer {
 
             exchange.getResponseHeaders().set("Cache-Control", "no-store");
             try {
-                switch (path) {
-                    case "/api/status" -> status(exchange, method);
-                    case "/api/alerts" -> alerts(exchange, method);
-                    default -> {
-                        if (path.startsWith("/api/alerts/")) {
-                            requireMethod(exchange, "DELETE");
-                            requireDriver(exchange);
-                            String id = path.substring("/api/alerts/".length());
-                            if (!id.matches("(?i)[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")) {
-                                throw new ApiError(400, "Invalid alert ID");
-                            }
-                            redis("HDEL", ALERTS, id);
-                            exchange.sendResponseHeaders(204, -1);
-                        } else {
-                            throw new ApiError(404, "Page not found");
-                        }
-                    }
-                }
+                routeApi(exchange, path, method);
             } catch (ApiError error) {
                 sendJson(exchange, error.status, Map.of("error", error.getMessage()));
-            } catch (InterruptedException error) {
-                Thread.currentThread().interrupt();
+            } catch (InterruptedException | IOException | RuntimeException error) {
+                if (error instanceof InterruptedException) Thread.currentThread().interrupt();
                 sendJson(exchange, 503, Map.of("error", "Shuttle data is temporarily unavailable"));
-            } catch (IOException | RuntimeException error) {
-                sendJson(exchange, 503, Map.of("error", "Shuttle data is temporarily unavailable"));
+            }
+        }
+    }
+
+    private static void routeApi(HttpExchange exchange, String path, String method)
+            throws IOException, InterruptedException {
+        switch (path) {
+            case "/api/status" -> status(exchange, method);
+            case "/api/alerts" -> alerts(exchange, method);
+            case "/api/dashboard" -> dashboard(exchange);
+            case "/api/trip/end" -> endTrip(exchange);
+            default -> {
+                if (!path.startsWith("/api/alerts/")) throw new ApiError(404, "Page not found");
+                requireMethod(exchange, "DELETE");
+                requireDriver(exchange);
+                String id = path.substring("/api/alerts/".length());
+                if (!id.matches("(?i)[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")) {
+                    throw new ApiError(400, "Invalid alert ID");
+                }
+                redis("HDEL", ALERTS, id);
+                exchange.sendResponseHeaders(204, -1);
             }
         }
     }
 
     private static void status(HttpExchange exchange, String method) throws IOException, InterruptedException {
         requireMethod(exchange, "GET", "PUT");
-        int taken;
-        if (method.equals("PUT")) {
+        if (method.equals("GET")) {
+            sendJson(exchange, 200, readStatus(redis("MGET", SEATS, UPDATED_AT)));
+        } else {
             requireDriver(exchange);
+            int taken;
             JsonElement value = readBody(exchange).get("taken");
             try {
                 if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
@@ -122,25 +145,46 @@ public class ShuttleServer {
                 throw new ApiError(400, "Invalid seat count");
             }
             if (taken < 0 || taken > CAPACITY) throw new ApiError(400, "Invalid seat count");
-            redis("SET", SEATS, taken);
-        } else {
-            JsonElement value = redis("GET", SEATS);
-            taken = value.isJsonNull() ? 0 : value.getAsInt();
+            long now = System.currentTimeMillis();
+            redis("MSET", SEATS, taken, UPDATED_AT, now);
+            sendJson(exchange, 200, new SeatStatus(taken, CAPACITY - taken, STOPS, now));
         }
-        sendJson(exchange, 200, Map.of("taken", taken, "available", CAPACITY - taken, "stops", STOPS));
+    }
+
+    private static SeatStatus readStatus(JsonElement result) {
+        var values = result.getAsJsonArray();
+        int taken = values.get(0).isJsonNull() ? 0 : values.get(0).getAsInt();
+        Long updatedAt = values.get(1).isJsonNull() ? null : values.get(1).getAsLong();
+        return new SeatStatus(taken, CAPACITY - taken, STOPS, updatedAt);
+    }
+
+    private static void dashboard(HttpExchange exchange) throws IOException, InterruptedException {
+        requireMethod(exchange, "GET");
+        requireDriver(exchange);
+        var snapshot = redis("EVAL", PRUNE_ALERTS + """
+            return {redis.call("MGET", KEYS[1], KEYS[2]), activeAlerts(KEYS[3], tonumber(ARGV[1]))}
+            """, 3, SEATS, UPDATED_AT, ALERTS, System.currentTimeMillis() - ALERT_LIFETIME).getAsJsonArray();
+        sendJson(exchange, 200, new Dashboard(readStatus(snapshot.get(0)), readAlerts(snapshot.get(1))));
+    }
+
+    private static void endTrip(HttpExchange exchange) throws IOException, InterruptedException {
+        requireMethod(exchange, "POST");
+        requireDriver(exchange);
+        long now = System.currentTimeMillis();
+        redis("EVAL", """
+            redis.call("MSET", KEYS[1], 0, KEYS[2], ARGV[1])
+            return redis.call("DEL", KEYS[3])
+            """, 3, SEATS, UPDATED_AT, ALERTS, now);
+        sendJson(exchange, 200, new SeatStatus(0, CAPACITY, STOPS, now));
     }
 
     private static void alerts(HttpExchange exchange, String method) throws IOException, InterruptedException {
         requireMethod(exchange, "GET", "POST");
         if (method.equals("GET")) {
             requireDriver(exchange);
-            List<StoredAlert> pending = new ArrayList<>();
-            for (JsonElement value : redis("HVALS", ALERTS).getAsJsonArray()) {
-                pending.add(JSON.fromJson(value.getAsString(), StoredAlert.class));
-            }
-            pending.sort(Comparator.comparingLong(StoredAlert::createdAt));
-            sendJson(exchange, 200, pending.stream()
-                .map(alert -> new PickupAlert(alert.id(), alert.name(), alert.stop())).toList());
+            var active = redis("EVAL", PRUNE_ALERTS + "return activeAlerts(KEYS[1], tonumber(ARGV[1]))",
+                1, ALERTS, System.currentTimeMillis() - ALERT_LIFETIME);
+            sendJson(exchange, 200, readAlerts(active));
             return;
         }
 
@@ -151,11 +195,21 @@ public class ShuttleServer {
             throw new ApiError(400, "Invalid name or pickup point");
         }
         String id = UUID.randomUUID().toString();
-        var alert = new StoredAlert(id, name, stop, name.toLowerCase(Locale.ROOT), System.currentTimeMillis());
-        if (redis("EVAL", SAVE_ALERT, 1, ALERTS, id, JSON.toJson(alert)).getAsInt() == 0) {
+        long now = System.currentTimeMillis();
+        var alert = new StoredAlert(id, name, stop, name.toLowerCase(Locale.ROOT), now);
+        if (redis("EVAL", SAVE_ALERT, 1, ALERTS, id, JSON.toJson(alert), now - ALERT_LIFETIME).getAsInt() == 0) {
             throw new ApiError(429, "Pickup alert list is full");
         }
         exchange.sendResponseHeaders(204, -1);
+    }
+
+    private static List<PickupAlert> readAlerts(JsonElement result) {
+        List<StoredAlert> pending = new ArrayList<>();
+        for (JsonElement value : result.getAsJsonArray()) {
+            pending.add(JSON.fromJson(value.getAsString(), StoredAlert.class));
+        }
+        pending.sort(Comparator.comparingLong(StoredAlert::createdAt));
+        return pending.stream().map(alert -> new PickupAlert(alert.id(), alert.name(), alert.stop())).toList();
     }
 
     private static JsonElement redis(Object... command) throws IOException, InterruptedException {
