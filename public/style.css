@@ -49,7 +49,6 @@ body {
 h1, h2 { margin: 0; line-height: 1; letter-spacing: -.055em; }
 
 h1 { font-size: clamp(1.9rem, 7vw, 5.4rem); }
-h1 span { color: var(--red); }
 .brand { display: flex; align-items: center; gap: clamp(.6rem, 2vw, 1.25rem); }
 .brand h1 { font-size: clamp(1.25rem, 5.5vw, 4.6rem); }
 .brand-logo { width: clamp(2.75rem, 6.5vw, 5rem); height: auto; flex: none; border-radius: 18%; }
