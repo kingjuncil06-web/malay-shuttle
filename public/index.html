@@ -23,46 +23,53 @@
       </svg>
     </div>
   </header>
-  <main>
-    <nav class="view-nav" aria-label="Shuttle views">
-      <button type="button" data-view="status" aria-controls="status" aria-pressed="true"><span aria-hidden="true">01</span> Shuttle status</button>
-      <button type="button" data-view="pickup" aria-controls="pickup" aria-pressed="false"><span aria-hidden="true">02</span> Pickup ping</button>
+  <main class="workspace">
+    <nav class="view-nav" aria-label="App panels">
+      <button type="button" data-view="passenger" aria-controls="passenger" aria-pressed="true"><span aria-hidden="true">01</span> Passenger</button>
+      <button type="button" data-view="driver-panel" aria-controls="driver-panel" aria-pressed="false"><span aria-hidden="true">02</span> Driver</button>
     </nav>
-    <div id="pickup-replies" role="status"></div>
-    <section id="status" aria-labelledby="status-heading">
-      <p class="eyebrow section-label">Seat availability</p>
-      <h2 id="status-heading">Shuttle status</h2>
-      <div class="counts">
-        <p><strong id="taken">—</strong> Seats taken</p>
-        <p><strong id="available">—</strong> Seats available</p>
-      </div>
-      <p id="seat-updated">Seat count last updated: —</p>
+    <div class="panel-area">
+      <div id="pickup-replies" role="status"></div>
       <p id="connection" role="status"></p>
-      <details id="driver">
-        <summary>Driver controls</summary>
-        <form id="seat-form">
-          <label>Driver code <input id="code" type="password" required></label>
-          <label>Seats taken <input id="seat-input" type="number" min="0" step="1" required></label>
-          <button>Update seats</button>
-          <button id="end-trip" type="button">End trip</button>
+      <section id="passenger" aria-labelledby="passenger-heading">
+        <p class="eyebrow section-label">Same route · Three shuttles</p>
+        <h2 id="passenger-heading">Find your shuttle</h2>
+        <p>Choose a shuttle to notify its driver. All plates shown are sample identifiers.</p>
+        <div id="fleet" class="fleet" aria-label="Shuttles"></div>
+        <h3>Ping your pickup point</h3>
+        <p id="ping-target"></p>
+        <nav id="stops" aria-label="Pickup locations"></nav>
+        <form id="ping-form">
+          <label>Your name <input id="name" autocomplete="name" maxlength="60" required></label>
+          <button id="ping-button" disabled>I’m still at the pickup point</button>
         </form>
-        <p id="driver-message" role="status"></p>
-        <h3>Pickup alerts <span id="alert-count"></span></h3>
-        <p id="alert-message" role="status">Enter the driver code to see waiting passengers.</p>
-        <ul id="alerts"></ul>
-      </details>
-    </section>
-    <section id="pickup" aria-labelledby="pickup-heading" hidden>
-      <p class="eyebrow section-label">Passenger check-in</p>
-      <h2 id="pickup-heading">Ping your pickup point</h2>
-      <p>Select where you’re waiting, then send your name to the driver.</p>
-      <nav id="stops" aria-label="Pickup locations"></nav>
-      <form id="ping-form">
-        <label>Your name <input id="name" autocomplete="name" maxlength="60" required></label>
-        <button id="ping-button" disabled>I’m still at the pickup point</button>
-      </form>
-      <p id="ping-message" role="status"></p>
-    </section>
+        <p id="ping-message" role="status"></p>
+      </section>
+      <section id="driver-panel" aria-labelledby="driver-heading" hidden>
+        <p class="eyebrow section-label">Shuttle management</p>
+        <h2 id="driver-heading">Driver panel</h2>
+        <label>Manage shuttle <select id="driver-shuttle"></select></label>
+        <p id="driver-plate"></p>
+        <div class="counts">
+          <p><strong id="taken">—</strong> Seats taken</p>
+          <p><strong id="available">—</strong> Seats available</p>
+        </div>
+        <p id="seat-updated">Seat count last updated: —</p>
+        <details id="driver">
+          <summary>Driver controls</summary>
+          <form id="seat-form">
+            <label>Driver code <input id="code" type="password" required></label>
+            <label>Seats taken <input id="seat-input" type="number" min="0" step="1" required></label>
+            <button>Update seats</button>
+            <button id="end-trip" type="button">End trip</button>
+          </form>
+          <p id="driver-message" role="status"></p>
+          <h3>Pickup alerts <span id="alert-count"></span></h3>
+          <p id="alert-message" role="status">Enter the driver code to see waiting passengers.</p>
+          <ul id="alerts"></ul>
+        </details>
+      </section>
+    </div>
   </main>
 </body>
 </html>

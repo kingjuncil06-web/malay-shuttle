@@ -1,6 +1,6 @@
 # MALAY-SHUTTLE source guide
 
-MALAY-SHUTTLE displays the seat count for one shuttle. A driver enters the number of occupied seats, and passengers can tell the driver they are still waiting at a pickup point.
+MALAY-SHUTTLE displays independent seat counts for three 15-seat shuttles on the same four-stop route. The Passenger panel shows all three with sample plates DEMO-001, DEMO-002, and DEMO-003. Passengers choose a shuttle before pinging its driver. The Driver panel manages the selected shuttle’s seats and alerts.
 
 ## How the app works
 
@@ -26,6 +26,7 @@ MALAY-SHUTTLE displays the seat count for one shuttle. A driver enters the numbe
 | Request | Who uses it | What it does |
 | --- | --- | --- |
 | `GET /api/status` | Anyone | Reads taken seats, available seats, and the pickup locations. |
+| `GET /api/shuttles` | Anyone | Reads all three shuttles and their seat counts in one request. |
 | `PUT /api/status` | Driver | Saves the occupied seat count. |
 | `POST /api/alerts` | Passenger | Sends a name and the selected pickup location. |
 | `GET /api/alerts` | Driver | Reads pending alerts. |
@@ -42,3 +43,5 @@ Each new ping returns a private receipt. The passenger’s tab keeps it across r
 On Vercel, the Java server reads and writes shared state in Upstash Redis. The seat count and its last-updated timestamp survive container restarts. Counts saved before the timestamp feature show a dash until the next update. Up to 100 pickup alerts can be pending at once. Pings expire after 30 minutes and are removed on the next alert read or submission. The driver can dismiss an alert sooner or clear all alerts with **End trip**. Production, Preview, and local development use separate Redis key prefixes.
 
 Passengers type their own names. The driver code is checked on the server before the driver can update seats, view names, or dismiss alerts.
+
+Shuttle-specific requests include an X-Shuttle-Id header with 1, 2, or 3. Omitting it selects Shuttle 1 for older callers. Shuttle 1 keeps the existing Redis keys and data. Shuttles 2 and 3 use separate keys, so a trip reset affects only the selected shuttle. The existing shared driver code grants access to all three. Plate numbers are fictional display labels.

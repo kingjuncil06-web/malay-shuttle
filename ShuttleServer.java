@@ -1,5 +1,6 @@
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
@@ -35,9 +36,6 @@ public class ShuttleServer {
     private static final Gson JSON = new GsonBuilder().setStrictness(Strictness.STRICT).create();
     private static final String PREFIX = "malay-shuttle:"
         + System.getenv().getOrDefault("VERCEL_ENV", "development") + ":";
-    private static final String SEATS = PREFIX + "taken";
-    private static final String UPDATED_AT = PREFIX + "updated-at";
-    private static final String ALERTS = PREFIX + "alerts";
     private static final String REPLIES = PREFIX + "reply:";
     private static final String UUID_PATTERN = "[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}";
     private static final int MAX_RECEIPTS = 10;
@@ -75,6 +73,25 @@ public class ShuttleServer {
         redis.call("HSET", KEYS[1], ARGV[1], ARGV[2])
         return 1
         """;
+
+    private record Shuttle(int id, String name, String plate) {
+        String key(String field) {
+            return PREFIX + (id == 1 ? "" : "shuttle:" + id + ":") + field;
+        }
+    }
+    private static final List<Shuttle> SHUTTLES = List.of(
+        new Shuttle(1, "Shuttle 1", "DEMO-001"),
+        new Shuttle(2, "Shuttle 2", "DEMO-002"),
+        new Shuttle(3, "Shuttle 3", "DEMO-003")
+    );
+    private record FleetEntry(Shuttle shuttle, SeatStatus status) {}
+
+    private static Shuttle selectedShuttle(HttpExchange exchange) {
+        String id = exchange.getRequestHeaders().getFirst("X-Shuttle-Id");
+        if (id == null) return SHUTTLES.getFirst();
+        return SHUTTLES.stream().filter(shuttle -> Integer.toString(shuttle.id()).equals(id))
+            .findFirst().orElseThrow(() -> new ApiError(400, "Invalid shuttle"));
+    }
 
     private record SeatStatus(int taken, int available, List<String> stops, Long updatedAt) {}
     private record Dashboard(SeatStatus status, List<PickupAlert> alerts) {}
@@ -116,6 +133,7 @@ public class ShuttleServer {
     private static void routeApi(HttpExchange exchange, String path, String method)
             throws IOException, InterruptedException {
         switch (path) {
+            case "/api/shuttles" -> fleet(exchange);
             case "/api/status" -> status(exchange, method);
             case "/api/alerts" -> alerts(exchange, method);
             case "/api/dashboard" -> dashboard(exchange);
@@ -129,6 +147,8 @@ public class ShuttleServer {
     }
 
     private static void alertAction(HttpExchange exchange, String path) throws IOException, InterruptedException {
+        Shuttle shuttle = selectedShuttle(exchange);
+
         boolean decline = path.endsWith("/decline");
         requireMethod(exchange, decline ? "POST" : "DELETE");
         requireDriver(exchange);
@@ -140,13 +160,13 @@ public class ShuttleServer {
                 if not value then return redis.call("EXISTS", KEYS[2]) end
                 local alert = cjson.decode(value)
                 if not alert.receipt or alert.createdAt <= tonumber(ARGV[2]) then return 0 end
-                redis.call("SET", KEYS[2], cjson.encode({receipt = alert.receipt, stop = alert.stop}), "PX", ARGV[3])
+                redis.call("SET", KEYS[2], cjson.encode({receipt = alert.receipt, stop = alert.stop .. " (" .. ARGV[4] .. ")"}), "PX", ARGV[3])
                 redis.call("HDEL", KEYS[1], ARGV[1])
                 return 1
-                """, 2, ALERTS, REPLIES + id, id, System.currentTimeMillis() - ALERT_LIFETIME, ALERT_LIFETIME);
+                """, 2, shuttle.key("alerts"), REPLIES + id, id, System.currentTimeMillis() - ALERT_LIFETIME, ALERT_LIFETIME, shuttle.name());
             if (result.getAsInt() == 0) throw new ApiError(404, "This ping is no longer available to reply to");
         } else {
-            redis("HDEL", ALERTS, id);
+            redis("HDEL", shuttle.key("alerts"), id);
         }
         exchange.sendResponseHeaders(204, -1);
     }
@@ -180,10 +200,31 @@ public class ShuttleServer {
         sendJson(exchange, 200, replies);
     }
 
+    private static void fleet(HttpExchange exchange) throws IOException, InterruptedException {
+        requireMethod(exchange, "GET");
+        List<String> command = new ArrayList<>();
+        command.add("MGET");
+        for (Shuttle shuttle : SHUTTLES) {
+            command.add(shuttle.key("taken"));
+            command.add(shuttle.key("updated-at"));
+        }
+        var values = redis(command.toArray()).getAsJsonArray();
+        List<FleetEntry> fleet = new ArrayList<>();
+        for (int i = 0; i < SHUTTLES.size(); i++) {
+            var pair = new JsonArray();
+            pair.add(values.get(i * 2));
+            pair.add(values.get(i * 2 + 1));
+            fleet.add(new FleetEntry(SHUTTLES.get(i), readStatus(pair)));
+        }
+        sendJson(exchange, 200, fleet);
+    }
+
     private static void status(HttpExchange exchange, String method) throws IOException, InterruptedException {
+        Shuttle shuttle = selectedShuttle(exchange);
+
         requireMethod(exchange, "GET", "PUT");
         if (method.equals("GET")) {
-            sendJson(exchange, 200, readStatus(redis("MGET", SEATS, UPDATED_AT)));
+            sendJson(exchange, 200, readStatus(redis("MGET", shuttle.key("taken"), shuttle.key("updated-at"))));
         } else {
             requireDriver(exchange);
             int taken;
@@ -198,7 +239,7 @@ public class ShuttleServer {
             }
             if (taken < 0 || taken > CAPACITY) throw new ApiError(400, "Invalid seat count");
             long now = System.currentTimeMillis();
-            redis("MSET", SEATS, taken, UPDATED_AT, now);
+            redis("MSET", shuttle.key("taken"), taken, shuttle.key("updated-at"), now);
             sendJson(exchange, 200, new SeatStatus(taken, CAPACITY - taken, STOPS, now));
         }
     }
@@ -211,31 +252,37 @@ public class ShuttleServer {
     }
 
     private static void dashboard(HttpExchange exchange) throws IOException, InterruptedException {
+        Shuttle shuttle = selectedShuttle(exchange);
+
         requireMethod(exchange, "GET");
         requireDriver(exchange);
         var snapshot = redis("EVAL", PRUNE_ALERTS + """
             return {redis.call("MGET", KEYS[1], KEYS[2]), activeAlerts(KEYS[3], tonumber(ARGV[1]))}
-            """, 3, SEATS, UPDATED_AT, ALERTS, System.currentTimeMillis() - ALERT_LIFETIME).getAsJsonArray();
+            """, 3, shuttle.key("taken"), shuttle.key("updated-at"), shuttle.key("alerts"), System.currentTimeMillis() - ALERT_LIFETIME).getAsJsonArray();
         sendJson(exchange, 200, new Dashboard(readStatus(snapshot.get(0)), readAlerts(snapshot.get(1))));
     }
 
     private static void endTrip(HttpExchange exchange) throws IOException, InterruptedException {
+        Shuttle shuttle = selectedShuttle(exchange);
+
         requireMethod(exchange, "POST");
         requireDriver(exchange);
         long now = System.currentTimeMillis();
         redis("EVAL", """
             redis.call("MSET", KEYS[1], 0, KEYS[2], ARGV[1])
             return redis.call("DEL", KEYS[3])
-            """, 3, SEATS, UPDATED_AT, ALERTS, now);
+            """, 3, shuttle.key("taken"), shuttle.key("updated-at"), shuttle.key("alerts"), now);
         sendJson(exchange, 200, new SeatStatus(0, CAPACITY, STOPS, now));
     }
 
     private static void alerts(HttpExchange exchange, String method) throws IOException, InterruptedException {
+        Shuttle shuttle = selectedShuttle(exchange);
+
         requireMethod(exchange, "GET", "POST");
         if (method.equals("GET")) {
             requireDriver(exchange);
             var active = redis("EVAL", PRUNE_ALERTS + "return activeAlerts(KEYS[1], tonumber(ARGV[1]))",
-                1, ALERTS, System.currentTimeMillis() - ALERT_LIFETIME);
+                1, shuttle.key("alerts"), System.currentTimeMillis() - ALERT_LIFETIME);
             sendJson(exchange, 200, readAlerts(active));
             return;
         }
@@ -250,7 +297,7 @@ public class ShuttleServer {
         long now = System.currentTimeMillis();
         String receipt = UUID.randomUUID().toString();
         var alert = new StoredAlert(id, name, stop, name.toLowerCase(Locale.ROOT), now, receipt);
-        int saved = redis("EVAL", SAVE_ALERT, 1, ALERTS, id, JSON.toJson(alert), now - ALERT_LIFETIME).getAsInt();
+        int saved = redis("EVAL", SAVE_ALERT, 1, shuttle.key("alerts"), id, JSON.toJson(alert), now - ALERT_LIFETIME).getAsInt();
         if (saved == 0) throw new ApiError(429, "Pickup alert list is full");
         if (saved == 2) throw new ApiError(409, "A ping for this name and stop is already pending");
         sendJson(exchange, 201, Map.of("receipt", id + "." + receipt));
