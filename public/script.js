@@ -85,7 +85,7 @@ function showAlerts(alerts) {
     for (const alert of alerts) {
         const item = document.createElement("li");
         item.textContent = alert.name + " is waiting at " + alert.stop + ".";
-        const actions = [["Dismiss", "", "DELETE"]];
+        const actions = [["Pick up", "", "DELETE"]];
         if (alert.canReply) actions.push(["Can’t pick up", "/decline", "POST"]);
         for (const [label, suffix, method] of actions) {
             const button = document.createElement("button");
