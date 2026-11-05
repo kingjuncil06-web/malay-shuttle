@@ -7,7 +7,9 @@ VERCEL DEPLOYMENT
    Add the following to Production:
    UPSTASH_REDIS_REST_URL    The HTTPS REST endpoint from Upstash
    UPSTASH_REDIS_REST_TOKEN  The read/write REST token from Upstash
-   SHUTTLE_DRIVER_CODE       Your private driver code
+   SHUTTLE_DRIVER_CODE_1     Private code for Shuttle 1
+   SHUTTLE_DRIVER_CODE_2     A different private code for Shuttle 2
+   SHUTTLE_DRIVER_CODE_3     A different private code for Shuttle 3
    Store these values in Vercel. Keep them out of Git.
 3. In Vercel, set the Root Directory to the folder containing vercel.json
    and Dockerfile. Clear any custom Build Command, Install Command, and
@@ -16,9 +18,11 @@ VERCEL DEPLOYMENT
    Keep Vercel system environment variables enabled so VERCEL_ENV selects
    the existing Production or Preview Redis keys.
    Push a branch and test its Preview deployment before merging to main.
-   For Preview testing, add the three variables to Preview as well.
+   For Preview testing, add all five variables to Preview as well.
 4. Open https://malay-shuttle.vercel.app/api/status and check for JSON. Set
-   an occupied seat count, send a sample ping, and dismiss it as the driver.
+   Select a shuttle in the Driver panel, unlock it with its code, enter
+   the current occupied count, and press Start trip. Send a sample ping
+   and try Acknowledge, Passenger boarded, and End trip.
    A 503 response indicates that Redis configuration or connectivity needs checking.
 5. Use the same Vercel URL on both devices. A fresh Redis database starts
    with zero occupied seats and no alerts.
@@ -31,12 +35,24 @@ New-Item -ItemType Directory -Force target | Out-Null
 curl.exe -fL https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.14.0/gson-2.14.0.jar -o target/gson.jar
 $env:UPSTASH_REDIS_REST_URL = "your Upstash HTTPS endpoint"
 $env:UPSTASH_REDIS_REST_TOKEN = "your Upstash read/write token"
-$env:SHUTTLE_DRIVER_CODE = "your private driver code"
+$env:SHUTTLE_DRIVER_CODE_1 = "private code for Shuttle 1"
+$env:SHUTTLE_DRIVER_CODE_2 = "different private code for Shuttle 2"
+$env:SHUTTLE_DRIVER_CODE_3 = "different private code for Shuttle 3"
 java -cp target/gson.jar ShuttleServer.java
 
 Open http://localhost:8080. Local runs use development Redis keys.
 Keep credentials out of Git.
 
-The passenger opens Pickup ping, chooses a stop, types a name, and sends a ping.
-The driver opens Driver controls under Shuttle status and enters the driver code.
-The driver can update the occupied count, view incoming alerts, and dismiss them.
+The passenger chooses an operating shuttle and pickup point, then sends a ping.
+The driver unlocks the assigned shuttle. One device controls each shuttle for up
+to eight hours. Release control when finished, or use Take over on a new device.
+The previous device loses permission immediately when its token is replaced.
+
+Trips are initially stopped, including existing data from the earlier version.
+Start each shuttle's trip with a confirmed occupied count before accepting pings.
+The old shared SHUTTLE_DRIVER_CODE is no longer used.
+
+Driver regression check with a separate test database:
+javac -encoding UTF-8 -cp target/gson.jar -d target/java-check ShuttleServer.java
+node tests/driver-flow.mjs
+The test uses unique Redis keys and deletes those test keys when finished.
