@@ -475,9 +475,10 @@ driver.ontoggle = refresh;
 driverShuttle.onchange = () => {
     showAlerts([]);
     byId("history").replaceChildren();
-    byId("seat-input").value = "";
     byId("driver-message").textContent = "";
     const selected = fleet.find(entry => entry.shuttle.id === Number(driverShuttle.value));
+    const seatInput = byId("seat-input");
+    seatInput.value = selected?.status.running ? "" : seatInput.defaultValue;
     if (selected) showStatus(selected.status);
     refresh();
 };
