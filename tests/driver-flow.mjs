@@ -99,6 +99,9 @@ try {
     state = await mutate(session, boarding);
     state = await mutate(session, boarding);
     assert.equal(state.status.taken, 4);
+    assert.equal(state.status.lastPickup, "Southwoods");
+    assert.deepEqual((await call("/shuttles")).body.map(entry => entry.status.lastPickup),
+        ["Southwoods", undefined, undefined]);
     assert.equal(state.alerts.length, 0);
     replies = await call("/pickup-replies", "POST", { receipts: [receipt] });
     assert.match(replies.body[receipt], /Boarding recorded/);
@@ -120,6 +123,7 @@ try {
     session = takeover.body.token;
     state = await dashboard(session);
     state = await mutate(session, action(state.status, "start", { value: 15 }));
+    assert.equal(state.status.lastPickup, undefined);
     assert.equal((await call("/driver/action", "POST", action(state.status, "adjust", { value: 1 }), session)).code, 409);
     assert.equal((await call("/driver/session", "DELETE", undefined, session)).code, 204);
     assert.equal((await call("/dashboard", "GET", undefined, session)).code, 403);

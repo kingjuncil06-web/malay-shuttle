@@ -1,6 +1,6 @@
 # MALAY-SHUTTLE source guide
 
-MALAY-SHUTTLE displays independent seat counts for three 15-seat shuttles on the same four-stop route. The Passenger panel shows all three with sample plates DEMO-001, DEMO-002, and DEMO-003. Passengers choose a shuttle before pinging its driver. The Driver panel manages the selected shuttle’s seats and alerts.
+MALAY-SHUTTLE displays independent seat counts for three 15-seat shuttles on the same four-stop route. The Passenger panel shows each shuttle’s plate number. Passengers choose a shuttle before pinging its driver. The Driver panel manages the selected shuttle’s seats and alerts.
 
 ## How the app works
 
@@ -49,7 +49,7 @@ The private cookie lasts 30 days, uses SameSite Strict, and is Secure in Vercel 
 
 The server checks a separate code for each shuttle when creating a driver session. It limits failed code attempts to ten per shuttle in five minutes. Subsequent driver requests use a private session token. Session authorization, trip/version checks, seat bounds, and driver writes run together in Redis.
 
-Shuttle-specific requests include an X-Shuttle-Id header with 1, 2, or 3. Omitting it selects Shuttle 1. Shuttle 1 keeps the existing Redis seat keys. Each shuttle now starts in a stopped state until a driver starts a trip. Plate numbers are fictional display labels.
+Shuttle-specific requests include an X-Shuttle-Id header with 1, 2, or 3. Omitting it selects Shuttle 1. Shuttle 1 keeps the existing Redis seat keys. Each shuttle now starts in a stopped state until a driver starts a trip.
 
 Each driver mutation carries a trip ID, state version, and operation ID. Redis rejects stale versions and remembers completed operation IDs for 24 hours. Repeating a completed request returns the latest state without applying it again. End trip resets seats, clears alerts, and sends a trip-ended message atomically.
 

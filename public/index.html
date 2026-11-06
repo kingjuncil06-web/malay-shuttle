@@ -38,8 +38,12 @@
       <p id="connection" role="status"></p>
       <section id="passenger" aria-labelledby="passenger-heading">
         <h2 id="passenger-heading">Find your shuttle</h2>
-        <p>Choose a shuttle to notify its driver. All plates shown are sample identifiers.</p>
+        <p>Choose a shuttle to notify its driver.</p>
         <div id="fleet" class="fleet" aria-label="Shuttles"></div>
+        <div id="full-shuttle" hidden>
+          <p id="full-shuttle-message" role="status"></p>
+          <nav id="shuttle-alternatives" aria-label="Shuttles with available seats"></nav>
+        </div>
         <h3>Ping your pickup point</h3>
         <p id="ping-target"></p>
         <div id="active-ping" hidden>
@@ -65,6 +69,7 @@
           <p><strong id="available">—</strong> Seats available</p>
         </div>
         <p id="trip-status" role="status"></p>
+        <p id="driver-last-pickup"></p>
         <details id="driver">
           <summary>Driver controls</summary>
           <form id="unlock-form">

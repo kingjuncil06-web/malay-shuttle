@@ -138,9 +138,9 @@ public class ShuttleServer {
         }
     }
     private static final List<Shuttle> SHUTTLES = List.of(
-        new Shuttle(1, "Shuttle 1", "DEMO-001"),
-        new Shuttle(2, "Shuttle 2", "DEMO-002"),
-        new Shuttle(3, "Shuttle 3", "DEMO-003")
+        new Shuttle(1, "Shuttle 1", "MXS 8628"),
+        new Shuttle(2, "Shuttle 2", "EPE 7739"),
+        new Shuttle(3, "Shuttle 3", "WCY 2368")
     );
     private record FleetEntry(Shuttle shuttle, SeatStatus status) {}
 
@@ -156,12 +156,12 @@ public class ShuttleServer {
         if redis.call("GET", KEYS[1]) ~= ARGV[1] then return redis.error_reply("403:Driver session expired or taken over") end
         local action, now = ARGV[2], tonumber(ARGV[5])
         local function snapshot()
-            return {redis.call("MGET", KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]),
-                    activeAlerts(KEYS[7], now), redis.call("LRANGE", KEYS[8], 0, 49)}
+            return {redis.call("MGET", KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7]),
+                    activeAlerts(KEYS[8], now), redis.call("LRANGE", KEYS[9], 0, 49)}
         end
         if action == "read" then return snapshot() end
         local fingerprint = cjson.encode({action, ARGV[3], ARGV[4], ARGV[6], ARGV[7], ARGV[8]})
-        local previous = redis.call("GET", KEYS[9])
+        local previous = redis.call("GET", KEYS[10])
         if previous then
             if previous ~= fingerprint then return redis.error_reply("409:Operation ID already used") end
             return snapshot()
@@ -186,56 +186,58 @@ public class ShuttleServer {
         if action == "start" then
             taken = tonumber(ARGV[6])
             redis.call("MSET", KEYS[4], ARGV[8], KEYS[5], "1")
+            redis.call("DEL", KEYS[7])
             updateSeats = true
         elseif action == "end" then
-            local entries = redis.call("HGETALL", KEYS[7])
+            local entries = redis.call("HGETALL", KEYS[8])
             for i = 1, #entries, 2 do
                 local alert = cjson.decode(entries[i + 1])
                 if (alert.expiresAt or alert.createdAt + 300000) > now then reply(entries[i], alert, "The trip has ended.") end
             end
             taken = 0
             redis.call("SET", KEYS[5], "0")
-            redis.call("DEL", KEYS[7])
+            redis.call("DEL", KEYS[8])
             updateSeats = true
         elseif action == "set" or action == "adjust" then
             taken = action == "set" and tonumber(ARGV[6]) or taken + tonumber(ARGV[6])
             if taken < 0 or taken > 15 then return redis.error_reply("409:Seat count must stay between 0 and 15") end
             updateSeats = true
         else
-            local value = redis.call("HGET", KEYS[7], ARGV[7])
+            local value = redis.call("HGET", KEYS[8], ARGV[7])
             if not value then return redis.error_reply("404:This ping is no longer available") end
             local alert = cjson.decode(value)
             if (alert.expiresAt or alert.createdAt + 300000) <= now then
-                redis.call("HDEL", KEYS[7], ARGV[7])
+                redis.call("HDEL", KEYS[8], ARGV[7])
                 return redis.error_reply("404:This ping has expired")
             end
             if action == "board" then
                 if taken >= 15 then return redis.error_reply("409:Shuttle is full. Correct the seat count first") end
                 taken = taken + 1
+                redis.call("SET", KEYS[7], alert.stop)
                 updateSeats = true
                 reply(ARGV[7], alert, "Boarding recorded at " .. alert.stop .. ".")
             elseif action == "acknowledge" then
                 alert.acknowledged = true
-                redis.call("HSET", KEYS[7], ARGV[7], cjson.encode(alert))
+                redis.call("HSET", KEYS[8], ARGV[7], cjson.encode(alert))
                 reply(ARGV[7], alert, "Your pickup request at " .. alert.stop .. " was acknowledged.")
             elseif action == "decline" then
                 reply(ARGV[7], alert, "The driver cannot pick you up at " .. alert.stop .. ".")
             elseif action == "absent" then
                 reply(ARGV[7], alert, "No passenger was found at " .. alert.stop .. ".")
             end
-            if action ~= "acknowledge" then redis.call("HDEL", KEYS[7], ARGV[7]) end
+            if action ~= "acknowledge" then redis.call("HDEL", KEYS[8], ARGV[7]) end
         end
         if updateSeats then redis.call("MSET", KEYS[2], taken, KEYS[3], now) end
         redis.call("INCR", KEYS[6])
-        redis.call("LPUSH", KEYS[8], cjson.encode({action = action, time = now, session = ARGV[11], taken = taken}))
-        redis.call("LTRIM", KEYS[8], 0, 49)
-        redis.call("EXPIRE", KEYS[8], 604800)
-        redis.call("SET", KEYS[9], fingerprint, "EX", 86400)
+        redis.call("LPUSH", KEYS[9], cjson.encode({action = action, time = now, session = ARGV[11], taken = taken}))
+        redis.call("LTRIM", KEYS[9], 0, 49)
+        redis.call("EXPIRE", KEYS[9], 604800)
+        redis.call("SET", KEYS[10], fingerprint, "EX", 86400)
         return snapshot()
         """;
 
     private record SeatStatus(int taken, int available, List<String> stops, Long updatedAt,
-                              String tripId, boolean running, long version) {}
+                              String tripId, boolean running, long version, String lastPickup) {}
     private record HistoryEntry(String action, long time, String session, int taken) {}
     private record Dashboard(SeatStatus status, List<PickupAlert> alerts, List<HistoryEntry> history,
                              List<FleetEntry> fleet) {}
@@ -374,7 +376,7 @@ public class ShuttleServer {
 
     private static List<String> statusKeys(Shuttle shuttle) {
         return List.of(shuttle.key("taken"), shuttle.key("updated-at"), shuttle.key("trip"),
-            shuttle.key("running"), shuttle.key("version"));
+            shuttle.key("running"), shuttle.key("version"), shuttle.key("last-pickup"));
     }
 
     private static List<FleetEntry> fleetData() throws IOException, InterruptedException {
@@ -384,7 +386,7 @@ public class ShuttleServer {
         var values = redis(command.toArray()).getAsJsonArray().asList();
         List<FleetEntry> result = new ArrayList<>();
         for (int i = 0; i < SHUTTLES.size(); i++) {
-            result.add(new FleetEntry(SHUTTLES.get(i), readStatus(values.subList(i * 5, i * 5 + 5))));
+            result.add(new FleetEntry(SHUTTLES.get(i), readStatus(values.subList(i * 6, i * 6 + 6))));
         }
         return result;
     }
@@ -408,7 +410,8 @@ public class ShuttleServer {
         String trip = values.get(2).isJsonNull() ? "" : values.get(2).getAsString();
         boolean running = !values.get(3).isJsonNull() && values.get(3).getAsString().equals("1");
         long version = values.get(4).isJsonNull() ? 0 : values.get(4).getAsLong();
-        return new SeatStatus(taken, CAPACITY - taken, STOPS, updatedAt, trip, running, version);
+        String lastPickup = values.get(5).isJsonNull() ? null : values.get(5).getAsString();
+        return new SeatStatus(taken, CAPACITY - taken, STOPS, updatedAt, trip, running, version, lastPickup);
     }
 
     private static void driverState(HttpExchange exchange, boolean mutate) throws IOException, InterruptedException {
@@ -445,7 +448,7 @@ public class ShuttleServer {
         if (mutate && !version.matches("[0-9]{1,18}")) throw new ApiError(400, "Missing state version");
         String trip = stringField(body, "tripId");
         String nextTrip = action.equals("start") ? operation : "";
-        List<Object> command = new ArrayList<>(List.of("EVAL", DRIVER_STATE, 9, shuttle.key("driver-session")));
+        List<Object> command = new ArrayList<>(List.of("EVAL", DRIVER_STATE, 10, shuttle.key("driver-session")));
         command.addAll(statusKeys(shuttle));
         command.addAll(List.of(shuttle.key("alerts"), shuttle.key("history"), shuttle.key("operation:" + operation),
             token, action, trip, version, System.currentTimeMillis(), value, alertId, nextTrip, REPLIES,

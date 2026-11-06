@@ -75,11 +75,16 @@ function countLabel(status) {
     return status.available + " available";
 }
 
+function lastPickupLabel(status) {
+    return "Last pickup: " + (status.lastPickup || "None recorded");
+}
+
 function showStatus(status) {
     driverStatus = status;
     byId("taken").textContent = status.taken;
     byId("available").textContent = status.running ? status.available : "—";
     byId("trip-status").textContent = countLabel(status);
+    byId("driver-last-pickup").textContent = lastPickupLabel(status);
     updateControls();
 }
 
@@ -90,11 +95,7 @@ function showFleet(entries) {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "shuttle-card";
-            button.onclick = () => {
-                passengerShuttle = shuttle.id;
-                byId("ping-message").textContent = "";
-                renderFleet();
-            };
+            button.onclick = () => selectPassengerShuttle(shuttle.id);
             byId("fleet").append(button);
             const option = document.createElement("option");
             option.value = shuttle.id;
@@ -105,8 +106,14 @@ function showFleet(entries) {
     }
     renderFleet();
     const selected = fleet.find(entry => entry.shuttle.id === Number(driverShuttle.value));
-    byId("driver-plate").textContent = "Sample plate · " + selected.shuttle.plate;
+    byId("driver-plate").textContent = selected.shuttle.plate;
     showStatus(selected.status);
+}
+
+function selectPassengerShuttle(id) {
+    passengerShuttle = id;
+    byId("ping-message").textContent = "";
+    renderFleet();
 }
 
 function renderFleet() {
@@ -114,8 +121,9 @@ function renderFleet() {
         const button = byId("fleet").children[i];
         button.setAttribute("aria-pressed", String(shuttle.id === passengerShuttle));
         const lines = [
-            ["strong", shuttle.name], ["span", "Sample plate · " + shuttle.plate],
-            ["b", countLabel(status)], ["span", status.taken + " of 15 seats taken"]
+            ["strong", shuttle.name], ["span", shuttle.plate],
+            ["b", countLabel(status)], ["span", status.taken + " of 15 seats taken"],
+            ["span", lastPickupLabel(status)]
         ];
         if (!button.children.length) {
             for (const [tag] of lines) button.append(document.createElement(tag));
@@ -127,7 +135,39 @@ function renderFleet() {
     }
     const selected = fleet.find(entry => entry.shuttle.id === passengerShuttle);
     byId("ping-target").textContent = "Sending to " + selected.shuttle.name + " · " + selected.shuttle.plate;
+    showShuttleAlternatives(selected);
     updatePassengerControls();
+}
+
+function showShuttleAlternatives({ shuttle, status }) {
+    const prompt = byId("full-shuttle");
+    prompt.hidden = !status.running || status.available !== 0;
+    if (prompt.hidden) return;
+
+    const alternatives = fleet.filter(entry => entry.status.running && entry.status.available > 0);
+    const message = alternatives.length ? shuttle.name + " is full. Choose another shuttle with available seats." :
+        "All running shuttles are full. Check again when seats open.";
+    const description = byId("full-shuttle-message");
+    if (description.textContent !== message) description.textContent = message;
+
+    const list = byId("shuttle-alternatives");
+    const buttons = alternatives.map(({ shuttle: option, status: seats }) => {
+        const label = option.name + " (" + option.plate + ") · " + seats.available + " available";
+        return { id: option.id, label };
+    });
+    if (buttons.length === list.children.length && buttons.every(({ id, label }, index) =>
+        list.children[index].dataset.shuttleId === String(id) && list.children[index].textContent === label)) return;
+    list.replaceChildren(...buttons.map(({ id, label }) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.shuttleId = id;
+        button.textContent = label;
+        button.onclick = () => {
+            selectPassengerShuttle(id);
+            byId("fleet").children[fleet.findIndex(entry => entry.shuttle.id === id)].focus();
+        };
+        return button;
+    }));
 }
 
 function updatePassengerControls() {
