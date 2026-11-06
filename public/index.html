@@ -50,7 +50,7 @@
         <p id="passenger-status"></p>
         <nav id="stops" aria-label="Pickup locations"></nav>
         <form id="ping-form">
-          <label>Your name <input id="name" autocomplete="name" maxlength="60" required></label>
+          <label>Full name <input id="name" autocomplete="name" maxlength="60" pattern=".*\p{L}.*\s+.*\p{L}.*" title="Enter at least two parts of your full name." required></label>
           <button id="ping-button" disabled>I’m still at the pickup point</button>
         </form>
         <p id="ping-message" role="status"></p>

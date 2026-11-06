@@ -39,6 +39,7 @@ public class ShuttleServer {
     private static final String REPLIES = PREFIX + "reply:";
     private static final String UUID_PATTERN = "[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}";
     private static final int MAX_RECEIPTS = 10;
+    private static final Pattern FULL_NAME = Pattern.compile("(?U).*\\p{L}.*\\s+.*\\p{L}.*");
     private static final Pattern REDIS_ERROR = Pattern.compile("(400|403|404|409|429):(.*)", Pattern.DOTALL);
     private static final HttpClient HTTP = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(3)).build();
@@ -508,9 +509,10 @@ public class ShuttleServer {
             if (!operationId.matches(UUID_PATTERN)) throw new ApiError(400, "Invalid submission ID");
             String name = stringField(body, "name").strip();
             String stop = stringField(body, "stop");
-            if (name.isEmpty() || name.length() > 60 || !STOPS.contains(stop)) {
-                throw new ApiError(400, "Invalid name or pickup point");
+            if (name.length() > 60 || !FULL_NAME.matcher(name).matches()) {
+                throw new ApiError(400, "Enter at least two parts of your full name.");
             }
+            if (!STOPS.contains(stop)) throw new ApiError(400, "Invalid pickup point");
             var alert = new StoredAlert(UUID.randomUUID().toString(), name, stop,
                 now, UUID.randomUUID().toString(), false, browser, now + 300000);
             data = JSON.toJson(alert);

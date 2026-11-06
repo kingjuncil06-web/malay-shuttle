@@ -66,7 +66,7 @@ try {
         once(app, "exit").then(() => { throw new Error("Java server exited before starting."); })
     ]);
     base = "http://127.0.0.1:" + line.split(" ").at(-1);
-    assert.equal((await call("/alerts", "POST", { name: "Test", stop: "Southwoods", operationId: randomUUID() },
+    assert.equal((await call("/alerts", "POST", { name: "Test Passenger", stop: "Southwoods", operationId: randomUUID() },
         undefined, 1, await newPassenger())).code, 409);
     assert.equal((await call("/driver/session", "POST", { code: "incorrect" })).code, 403);
     const login = await call("/driver/session", "POST", { code: "test-code-1" });
@@ -129,6 +129,9 @@ try {
 
     const browser = await newPassenger();
     const submit = { name: "Same name", stop: "Southwoods", operationId: randomUUID() };
+    const incomplete = await call("/alerts", "POST", { ...submit, name: "Andrea" }, undefined, 1, browser);
+    assert.equal(incomplete.code, 400);
+    assert.match(incomplete.body.error, /full name/);
     const first = await call("/alerts", "POST", submit, undefined, 1, browser);
     assert.equal(first.code, 201, JSON.stringify(first.body));
     const active = first.body.active;
@@ -182,7 +185,7 @@ try {
     const oldRetry = await call("/alerts", "POST", submit, undefined, 1, browser);
     assert.equal(oldRetry.body.active, undefined, "Retrying a completed submission must not recreate it.");
     const simultaneous = await Promise.all([1, 2].map(index =>
-        call("/alerts", "POST", { ...submit, name: "Concurrent " + index, operationId: randomUUID() },
+        call("/alerts", "POST", { ...submit, name: "Concurrent Passenger " + index, operationId: randomUUID() },
             undefined, 1, browser)));
     assert.deepEqual(simultaneous.map(result => result.code).sort(), [201, 409]);
 
