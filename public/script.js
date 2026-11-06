@@ -72,7 +72,6 @@ for (const button of views) {
 
 function countLabel(status) {
     if (!status.running) return "Not running";
-    if (!status.updatedAt || Date.now() - status.updatedAt > 5 * 60000) return "Needs seat confirmation";
     return status.available + " available";
 }
 
@@ -80,8 +79,6 @@ function showStatus(status) {
     driverStatus = status;
     byId("taken").textContent = status.taken;
     byId("available").textContent = status.running ? status.available : "—";
-    byId("seat-updated").textContent = "Seat count last updated: " +
-        (status.updatedAt ? new Date(status.updatedAt).toLocaleString() : "Unconfirmed");
     byId("trip-status").textContent = countLabel(status);
     updateControls();
 }
@@ -118,8 +115,7 @@ function renderFleet() {
         button.setAttribute("aria-pressed", String(shuttle.id === passengerShuttle));
         const lines = [
             ["strong", shuttle.name], ["span", "Sample plate · " + shuttle.plate],
-            ["b", countLabel(status)], ["span", status.taken + " of 15 seats taken"],
-            ["small", "Updated · " + (status.updatedAt ? new Date(status.updatedAt).toLocaleString() : "Unconfirmed")]
+            ["b", countLabel(status)], ["span", status.taken + " of 15 seats taken"]
         ];
         if (!button.children.length) {
             for (const [tag] of lines) button.append(document.createElement(tag));
